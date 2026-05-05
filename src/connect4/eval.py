@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import time
 import numpy as np
 from types import SimpleNamespace
@@ -10,7 +12,7 @@ from .game import Position, apply_move, canonicalize, is_terminal, legal_moves, 
 from .league import LeaguePool
 from .mcts import select_move
 from .nn import TinyNet
-from .oracle import MinimaxOracle, OracleResult
+from .oracle import OracleResult, build_oracle
 
 
 @dataclass(frozen=True)
@@ -22,13 +24,19 @@ class EvalConfig:
     league_games_per_pair: int = 2
     minimax_depths: tuple[int, ...] = (2, 4, 6, 8)
     oracle_depth: int = 10
+    oracle_backend: str = "minimax"
+    heldout_dataset_path: str = "data/heldout_positions_v1.json"
 
 
-_HELDOUT_LABEL_CACHE: dict[tuple[int, int, int], tuple[list[Position], list[OracleResult], float]] = {}
+_HELDOUT_LABEL_CACHE: dict[
+    tuple[int, int, int, str, str],
+    tuple[list[Position], list[OracleResult], float],
+] = {}
+_HELDOUT_DATASET_CACHE: dict[str, list[Position]] = {}
 
 
 def _play_vs_minimax(net: TinyNet, depth: int, games: int, sims: int) -> float:
-    oracle = MinimaxOracle(depth=depth)
+    oracle = build_oracle("minimax", depth=depth)
     wins = 0
     for game_idx in range(games):
         pos = new_game()
@@ -174,19 +182,55 @@ def _get_heldout_with_oracle_labels(
     heldout_size: int,
     heldout_seed: int,
     oracle_depth: int,
+    oracle_backend: str,
+    heldout_dataset_path: str,
 ) -> tuple[list[Position], list[OracleResult], float, bool]:
-    key = (heldout_size, heldout_seed, oracle_depth)
+    key = (
+        heldout_size,
+        heldout_seed,
+        oracle_depth,
+        oracle_backend,
+        heldout_dataset_path,
+    )
     cached = _HELDOUT_LABEL_CACHE.get(key)
     if cached is not None:
         heldout, labels, label_time_s = cached
         return heldout, labels, label_time_s, True
-    heldout = make_heldout_dataset(size=heldout_size, seed=heldout_seed)
-    oracle = MinimaxOracle(depth=oracle_depth, use_tt=True)
+    heldout = load_heldout_dataset(
+        path=heldout_dataset_path,
+        size=heldout_size,
+        seed=heldout_seed,
+    )
+    oracle = build_oracle(oracle_backend, depth=oracle_depth, use_tt=True)
     t0 = time.perf_counter()
     labels = [oracle.evaluate(pos) for pos in heldout]
     label_time_s = time.perf_counter() - t0
     _HELDOUT_LABEL_CACHE[key] = (heldout, labels, label_time_s)
     return heldout, labels, label_time_s, False
+
+
+def load_heldout_dataset(path: str, size: int, seed: int) -> list[Position]:
+    dataset = _HELDOUT_DATASET_CACHE.get(path)
+    if dataset is None:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        positions_raw = payload.get("positions", [])
+        dataset = [
+            Position(
+                board=np.asarray(item["board"], dtype=np.int8),
+                to_play=int(item["to_play"]),
+            )
+            for item in positions_raw
+        ]
+        _HELDOUT_DATASET_CACHE[path] = dataset
+    if size <= 0:
+        return []
+    if size > len(dataset):
+        raise ValueError(
+            f"requested heldout_size={size} exceeds dataset size={len(dataset)} at {path}",
+        )
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(len(dataset), size=size, replace=False)
+    return [dataset[int(i)] for i in indices]
 
 
 def _play_head_to_head(net_a: TinyNet, net_b: TinyNet, games: int, sims: int) -> tuple[int, int, int]:
@@ -284,6 +328,8 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         heldout_size=cfg.heldout_size,
         heldout_seed=cfg.heldout_seed,
         oracle_depth=cfg.oracle_depth,
+        oracle_backend=cfg.oracle_backend,
+        heldout_dataset_path=cfg.heldout_dataset_path,
     )
     heldout_prep_time_s = time.perf_counter() - t0
     acc, mse, nan_inf, heldout_forward_time_s = _heldout_metrics_with_labels(
@@ -350,21 +396,3 @@ def _play_vs_random(net: TinyNet, games: int, sims: int) -> float:
     return wins / max(1, games)
 
 
-def make_heldout_dataset(size: int = 1000, seed: int = 0) -> list[Position]:
-    rng = np.random.default_rng(seed)
-    out: list[Position] = []
-    while len(out) < size:
-        pos = new_game()
-        steps = int(rng.integers(0, 20))
-        for _ in range(steps):
-            legal = legal_moves(pos)
-            if not legal:
-                break
-            pos = apply_move(pos, int(rng.choice(legal)))
-            terminal, _ = is_terminal(pos)
-            if terminal:
-                break
-        terminal, _ = is_terminal(pos)
-        if not terminal:
-            out.append(pos)
-    return out

@@ -17,13 +17,16 @@ eval:
   mcts_sims_eval: 400
   heldout_size: 10000
   heldout_seed: 0
+  heldout_dataset_path: data/heldout_positions_v1.json
   league_games_per_pair: 2
   eval_interval_steps: 100
 train:
   epochs: 1
-  steps: 100
+  steps_per_1k_positions: 100
+  positions_block: 1000
   batch_size: 128
   lr: 0.01
+  cosine_min_lr: 0.0001
 output:
   dir: checkpoints/small
 logging:

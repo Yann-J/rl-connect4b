@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Protocol
 
 from .game import Position, apply_move, is_terminal, legal_moves
 
@@ -10,6 +11,11 @@ from .game import Position, apply_move, is_terminal, legal_moves
 class OracleResult:
     value: float
     best_move: int
+
+
+class Oracle(Protocol):
+    def evaluate(self, pos: Position) -> OracleResult:
+        ...
 
 
 class MinimaxOracle:
@@ -25,7 +31,13 @@ class MinimaxOracle:
             move = legal[0] if legal else -1
         return OracleResult(value=float(value), best_move=int(move))
 
-    def _search(self, pos: Position, depth: int, alpha: float, beta: float) -> tuple[float, int]:
+    def _search(
+        self,
+        pos: Position,
+        depth: int,
+        alpha: float,
+        beta: float,
+    ) -> tuple[float, int]:
         terminal, winner = is_terminal(pos)
         if terminal:
             if winner == 0:
@@ -55,3 +67,19 @@ class MinimaxOracle:
         if self.use_tt:
             self._tt[key] = result
         return result
+
+
+def build_oracle(
+    backend: str = "minimax",
+    *,
+    depth: int = 6,
+    use_tt: bool = True,
+) -> Oracle:
+    backend_name = backend.strip().lower()
+    if backend_name == "minimax":
+        return MinimaxOracle(depth=depth, use_tt=use_tt)
+    if backend_name == "pons":
+        raise NotImplementedError(
+            "oracle backend 'pons' is not implemented yet",
+        )
+    raise ValueError(f"unknown oracle backend: {backend}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+import math
 import random
 import time
 
@@ -35,6 +36,10 @@ def _build_eval_cfg(eval_cfg: dict, seed: int, profile: str) -> EvalConfig:
         league_games_per_pair=get("league_games_per_pair", 2),
         minimax_depths=minimax_depths,
         oracle_depth=get("oracle_depth", 10),
+        oracle_backend=str(eval_cfg.get("oracle_backend", "minimax")),
+        heldout_dataset_path=str(
+            eval_cfg.get("heldout_dataset_path", "data/heldout_positions_v1.json"),
+        ),
     )
 
 
@@ -54,6 +59,9 @@ def run_training(config: dict) -> str:
     warmup_games = int(config["selfplay"].get("warmup_random_games", 1000))
     output_dir = Path(config["output"]["dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    root_dir = Path(config.get("project_root", Path.cwd()))
+    if not root_dir.is_absolute():
+        root_dir = (Path.cwd() / root_dir).resolve()
     league_cfg = config.get("league", {})
     league = LeaguePool(
         size=int(league_cfg.get("size", 10)),
@@ -242,20 +250,39 @@ def run_training(config: dict) -> str:
     if len(buffer) == 0:
         raise RuntimeError("self-play produced no samples")
 
-    eval_cfg = config.get("eval", {})
+    eval_cfg = dict(config.get("eval", {}))
+    heldout_dataset_path = eval_cfg.get("heldout_dataset_path", "data/heldout_positions_v1.json")
+    if not Path(heldout_dataset_path).is_absolute():
+        heldout_dataset_path = (root_dir / heldout_dataset_path).resolve()
+    eval_cfg["heldout_dataset_path"] = str(heldout_dataset_path)
     eval_enabled = bool(eval_cfg.get("enabled", False))
-    eval_interval = int(
-        eval_cfg.get(
-            "eval_interval_steps",
-            max(1, int(config["train"]["steps"])),
-        ),
-    )
+    eval_interval_raw = eval_cfg.get("eval_interval_steps")
     eval_once_at_start = bool(eval_cfg.get("eval_once_at_start", True))
     full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
     epochs = int(config["train"].get("epochs", 1))
-    total_steps = int(config["train"]["steps"])
+    train_cfg = config["train"]
+    if "steps" in train_cfg:
+        total_steps = int(train_cfg["steps"])
+    else:
+        steps_per_1k_positions = int(train_cfg.get("steps_per_1k_positions", 100))
+        positions_block = int(train_cfg.get("positions_block", 1000))
+        approx_new_positions = int(config["selfplay"]["games"]) * 42 * 2
+        total_steps = max(
+            1,
+            (approx_new_positions * steps_per_1k_positions) // max(1, positions_block),
+        )
     steps_per_epoch = max(1, total_steps // max(1, epochs))
     remainder_steps = total_steps % max(1, epochs)
+    eval_interval = int(eval_interval_raw) if eval_interval_raw is not None else total_steps
+    base_lr = float(config["train"]["lr"])
+    cosine_min_lr = float(config["train"].get("cosine_min_lr", 1e-5))
+
+    def lr_at(step: int) -> float:
+        if total_steps <= 1:
+            return base_lr
+        progress = min(1.0, max(0.0, step / (total_steps - 1)))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return cosine_min_lr + (base_lr - cosine_min_lr) * cosine
 
     if eval_enabled and eval_once_at_start:
         print("[eval] running initial eval panel...")
@@ -287,7 +314,8 @@ def run_training(config: dict) -> str:
                 batch_size=int(config["train"]["batch_size"]),
                 rng=rng,
             )
-            loss = model.train_step(x, mask, pi, z, lr=float(config["train"]["lr"]))
+            current_lr = lr_at(completed_steps)
+            loss = model.train_step(x, mask, pi, z, lr=current_lr)
             ensure_finite_loss(loss, x, mask, pi, z, "train", train_step_idx)
             now = time.perf_counter()
             dt = now - last_train_step_time
@@ -296,6 +324,7 @@ def run_training(config: dict) -> str:
             writer.add_scalar("train/loss", loss, train_step_idx)
             writer.add_scalar("train/grad_norm", model.last_grad_norm, train_step_idx)
             writer.add_scalar("train/fps", fps, train_step_idx)
+            writer.add_scalar("train/lr", current_lr, train_step_idx)
             nan_inf_count = int(
                 np.isnan(x).sum()
                 + np.isinf(x).sum()
@@ -312,6 +341,7 @@ def run_training(config: dict) -> str:
                     {
                         "train/loss": loss,
                         "train/grad_norm": model.last_grad_norm,
+                        "train/lr": current_lr,
                     },
                     step=train_step_idx,
                 )
@@ -319,7 +349,8 @@ def run_training(config: dict) -> str:
             if progress_every > 0 and completed_steps % progress_every == 0:
                 print(
                     f"[train] step={completed_steps}/{total_steps} "
-                    f"loss={loss:.4f} grad_norm={model.last_grad_norm:.4f} buffer={len(buffer)}",
+                    f"loss={loss:.4f} grad_norm={model.last_grad_norm:.4f} "
+                    f"lr={current_lr:.6f} buffer={len(buffer)}",
                 )
                 writer.flush()
             train_step_idx += 1

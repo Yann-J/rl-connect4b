@@ -11,9 +11,11 @@ selfplay:
 eval:
   mcts_sims_eval: 400
 train:
-  steps: 20
+  steps_per_1k_positions: 100
+  positions_block: 1000
   batch_size: 64
   lr: 0.01
+  cosine_min_lr: 0.0001
 output:
   dir: checkpoints/skeleton
 logging:

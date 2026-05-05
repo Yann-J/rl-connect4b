@@ -6,11 +6,11 @@ import pytest
 import sys
 import types
 
-from connect4.game import apply_move, legal_moves, new_game
-from connect4.eval import EvalConfig, run_eval_panel
+from connect4.game import apply_move, legal_moves, new_game, Position
+from connect4.eval import EvalConfig, load_heldout_dataset, run_eval_panel
 from connect4.league import LeaguePool
 from connect4.nn import TinyNet
-from connect4.oracle import MinimaxOracle
+from connect4.oracle import MinimaxOracle, build_oracle
 
 
 def test_oracle_returns_legal_move_and_is_deterministic() -> None:
@@ -33,6 +33,14 @@ def test_oracle_tt_and_no_tt_agree() -> None:
     no_tt = MinimaxOracle(depth=4, use_tt=False).evaluate(pos)
     assert with_tt.best_move == no_tt.best_move
     assert np.isclose(with_tt.value, no_tt.value)
+
+
+def test_oracle_factory_returns_minimax_backend() -> None:
+    pos = new_game()
+    oracle = build_oracle("minimax", depth=4)
+    result = oracle.evaluate(pos)
+    assert result.best_move in legal_moves(pos)
+    assert np.isfinite(result.value)
 
 
 def test_league_fifo_sampling_and_persistence(tmp_path: Path) -> None:
@@ -154,3 +162,13 @@ def test_eval_panel_handles_kaggle_dict_and_namespace_obs(monkeypatch) -> None:
     )
     assert "winrate_vs_random" in panel
     assert "winrate_vs_negamax" in panel
+
+
+def test_load_heldout_dataset_from_repo_file() -> None:
+    heldout = load_heldout_dataset(
+        path="data/heldout_positions_v1.json",
+        size=32,
+        seed=0,
+    )
+    assert len(heldout) == 32
+    assert all(isinstance(p, Position) for p in heldout)
