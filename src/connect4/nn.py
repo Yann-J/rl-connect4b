@@ -246,5 +246,8 @@ class TinyNet:
                 "value": {0: "batch"},
             },
             opset_version=opset,
+            # Keep parameters embedded in the .onnx so browser runtimes do not
+            # need ONNX external-data sidecar files.
+            external_data=False,
         )
         return str(out_path)

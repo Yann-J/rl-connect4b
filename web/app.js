@@ -33,6 +33,7 @@ let session = null;
 let isAnimatingMove = false;
 let endgameAnimationPlayed = false;
 let downloadedModelBytes = 0;
+let modelLoadError = null;
 const MODEL_STORAGE_KEY = "connect4-model-name";
 const DEFAULT_MODEL_NAME = "policy.onnx";
 const MODE_STORAGE_KEY = "connect4-ai-mode";
@@ -223,6 +224,9 @@ function formatDownloadedBytes(bytes) {
 }
 
 function gameStateText() {
+  if (modelLoadError) {
+    return modelLoadError;
+  }
   if (done) {
     if (winner === humanPiece) return "You win! 🎉";
     if (winner === aiPiece) return "AI wins... 😭";
@@ -460,44 +464,21 @@ async function loadModel() {
   try {
     session = null;
     downloadedModelBytes = 0;
+    modelLoadError = null;
     updateStatus(gameStateText());
-    const response = await fetch(`./${modelName}`);
+    const modelUrl = `./${modelName}`;
+    const response = await fetch(modelUrl);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-
-    let modelData;
-    if (!response.body) {
-      modelData = new Uint8Array(await response.arrayBuffer());
-      downloadedModelBytes = modelData.byteLength;
-      updateStatus(gameStateText());
-    } else {
-      const reader = response.body.getReader();
-      const chunks = [];
-      let totalLength = 0;
-
-      while (true) {
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-        if (!value) continue;
-        chunks.push(value);
-        totalLength += value.byteLength;
-        downloadedModelBytes = totalLength;
-        updateStatus(gameStateText());
-      }
-
-      modelData = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        modelData.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
-    }
-
-    session = await ort.InferenceSession.create(modelData.buffer);
+    downloadedModelBytes =
+      Number.parseInt(response.headers.get("content-length") || "0", 10) || 0;
+    updateStatus(gameStateText());
+    session = await ort.InferenceSession.create(modelUrl);
     await newGame(true);
   } catch (error) {
-    updateStatus(`Failed to load ${modelName}: ${error.message}`);
+    modelLoadError = `Failed to load ${modelName}: ${error.message}`;
+    updateStatus(gameStateText());
     render();
   }
 }
