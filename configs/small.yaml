@@ -1,0 +1,20 @@
+seed: 0
+model:
+  hidden: 64
+buffer:
+  capacity: 50000
+selfplay:
+  games: 64
+  warmup_random_games: 1000
+  mcts_sims_selfplay: 100
+eval:
+  mcts_sims_eval: 400
+train:
+  steps: 100
+  batch_size: 128
+  lr: 0.01
+output:
+  dir: checkpoints/small
+logging:
+  tensorboard_dir: checkpoints/small/runs
+

@@ -1,0 +1,17 @@
+pyproject.toml
+src/connect4/__init__.py
+src/connect4/game.py
+src/connect4/mcts.py
+src/connect4/nn.py
+src/connect4/play.py
+src/connect4/replay_buffer.py
+src/connect4/selfplay.py
+src/connect4/train.py
+src/rl_connect4b.egg-info/PKG-INFO
+src/rl_connect4b.egg-info/SOURCES.txt
+src/rl_connect4b.egg-info/dependency_links.txt
+src/rl_connect4b.egg-info/requires.txt
+src/rl_connect4b.egg-info/top_level.txt
+tests/test_game.py
+tests/test_mcts_replay.py
+tests/test_smoke.py
