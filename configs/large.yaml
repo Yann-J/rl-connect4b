@@ -21,7 +21,7 @@ eval:
   league_games_per_pair: 2
   minimax_depths: [2, 4, 6]
   oracle_depth: 6
-  oracle_backend: minimax
+  oracle_backend: pons
   eval_interval_steps: 3000
   full_panel_every: 5
   quick:

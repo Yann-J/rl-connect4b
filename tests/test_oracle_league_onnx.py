@@ -43,6 +43,28 @@ def test_oracle_factory_returns_minimax_backend() -> None:
     assert np.isfinite(result.value)
 
 
+def test_oracle_factory_returns_pons_backend() -> None:
+    pos = new_game()
+    for move in [3, 2, 3, 2, 3, 1]:
+        pos = apply_move(pos, move)
+    oracle = build_oracle("pons")
+    result = oracle.evaluate(pos)
+    assert result.best_move == 3
+    assert result.value == 1.0
+
+
+def test_pons_oracle_returns_legal_move_and_is_deterministic() -> None:
+    pos = new_game()
+    for move in [3, 2, 4, 2, 5]:
+        pos = apply_move(pos, move)
+    oracle = build_oracle("pons")
+    r1 = oracle.evaluate(pos)
+    r2 = oracle.evaluate(pos)
+    assert r1.best_move in legal_moves(pos)
+    assert r1.best_move == r2.best_move
+    assert np.isclose(r1.value, r2.value)
+
+
 def test_league_fifo_sampling_and_persistence(tmp_path: Path) -> None:
     league = LeaguePool(size=3, current_vs_current_prob=0.5, seed=0)
     league.snapshot("a.ckpt")

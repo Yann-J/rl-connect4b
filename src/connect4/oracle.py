@@ -14,8 +14,7 @@ class OracleResult:
 
 
 class Oracle(Protocol):
-    def evaluate(self, pos: Position) -> OracleResult:
-        ...
+    def evaluate(self, pos: Position) -> OracleResult: ...
 
 
 class MinimaxOracle:
@@ -69,6 +68,152 @@ class MinimaxOracle:
         return result
 
 
+class PonsOracle:
+    _ROWS = 6
+    _COLS = 7
+    _BITS_PER_COL = _ROWS + 1
+    _CENTER_FIRST = (3, 2, 4, 1, 5, 0, 6)
+
+    def __init__(self, use_tt: bool = True) -> None:
+        self.use_tt = use_tt
+        self._tt: dict[tuple[int, int], int] = {}
+        self._best_move_tt: dict[tuple[int, int], int] = {}
+        self._bottom_masks = tuple(
+            1 << (col * self._BITS_PER_COL) for col in range(self._COLS)
+        )
+        self._top_masks = tuple(
+            1 << (col * self._BITS_PER_COL + self._ROWS - 1)
+            for col in range(self._COLS)
+        )
+
+    def evaluate(self, pos: Position) -> OracleResult:
+        terminal, winner = is_terminal(pos)
+        if terminal:
+            if winner == 0:
+                return OracleResult(value=0.0, best_move=-1)
+            return OracleResult(
+                value=1.0 if winner == pos.to_play else -1.0,
+                best_move=-1,
+            )
+        current, mask = self._encode_position(pos)
+        best_move = -1
+        best_score = -2
+        alpha = -1
+        beta = 1
+        for move in self._ordered_moves(mask):
+            if self._is_winning_move(current, mask, move):
+                return OracleResult(value=1.0, best_move=move)
+            next_current, next_mask = self._play(current, mask, move)
+            score = -self._solve(next_current, next_mask, -beta, -alpha)
+            if score > best_score:
+                best_score = score
+                best_move = move
+            if score > alpha:
+                alpha = score
+            if alpha >= beta:
+                break
+        if best_move == -1:
+            legal = legal_moves(pos)
+            best_move = legal[0] if legal else -1
+            best_score = 0 if best_score == -2 else best_score
+        return OracleResult(value=float(best_score), best_move=int(best_move))
+
+    def _solve(self, current: int, mask: int, alpha: int, beta: int) -> int:
+        if self._has_alignment(mask ^ current):
+            return -1
+        if mask == self._full_mask():
+            return 0
+        key = self._tt_key(current, mask)
+        if self.use_tt:
+            cached = self._tt.get(key)
+            if cached is not None:
+                return cached
+        for move in self._ordered_moves(mask):
+            if self._is_winning_move(current, mask, move):
+                if self.use_tt:
+                    self._tt[key] = 1
+                    self._best_move_tt[key] = move
+                return 1
+
+        best = -1
+        best_move = -1
+        for move in self._ordered_moves(mask):
+            next_current, next_mask = self._play(current, mask, move)
+            score = -self._solve(next_current, next_mask, -beta, -alpha)
+            if score > best:
+                best = score
+                best_move = move
+            if score > alpha:
+                alpha = score
+            if alpha >= beta:
+                break
+        if self.use_tt:
+            self._tt[key] = best
+            if best_move != -1:
+                self._best_move_tt[key] = best_move
+        return best
+
+    def _ordered_moves(self, mask: int) -> list[int]:
+        return [col for col in self._CENTER_FIRST if self._can_play(mask, col)]
+
+    def _play(self, current: int, mask: int, col: int) -> tuple[int, int]:
+        return current ^ mask, mask | (mask + self._bottom_masks[col])
+
+    def _can_play(self, mask: int, col: int) -> bool:
+        return (mask & self._top_masks[col]) == 0
+
+    def _is_winning_move(self, current: int, mask: int, col: int) -> bool:
+        pos = current | (mask + self._bottom_masks[col])
+        return self._has_alignment(pos)
+
+    def _has_alignment(self, bitboard: int) -> bool:
+        m = bitboard & (bitboard >> self._BITS_PER_COL)
+        if m & (m >> (2 * self._BITS_PER_COL)):
+            return True
+        m = bitboard & (bitboard >> (self._BITS_PER_COL - 1))
+        if m & (m >> (2 * (self._BITS_PER_COL - 1))):
+            return True
+        m = bitboard & (bitboard >> (self._BITS_PER_COL + 1))
+        if m & (m >> (2 * (self._BITS_PER_COL + 1))):
+            return True
+        m = bitboard & (bitboard >> 1)
+        return bool(m & (m >> 2))
+
+    def _full_mask(self) -> int:
+        full = 0
+        for col in range(self._COLS):
+            full |= ((1 << self._ROWS) - 1) << (col * self._BITS_PER_COL)
+        return full
+
+    def _encode_position(self, pos: Position) -> tuple[int, int]:
+        current = 0
+        mask = 0
+        for col in range(self._COLS):
+            for row in range(self._ROWS):
+                piece = int(pos.board[self._ROWS - 1 - row, col])
+                if piece == 0:
+                    continue
+                bit = 1 << (col * self._BITS_PER_COL + row)
+                mask |= bit
+                if piece == pos.to_play:
+                    current |= bit
+        return current, mask
+
+    def _mirror(self, bitboard: int) -> int:
+        mirrored = 0
+        for col in range(self._COLS):
+            col_bits = bitboard >> (col * self._BITS_PER_COL)
+            col_bits &= (1 << self._BITS_PER_COL) - 1
+            dst_col = self._COLS - 1 - col
+            mirrored |= col_bits << (dst_col * self._BITS_PER_COL)
+        return mirrored
+
+    def _tt_key(self, current: int, mask: int) -> tuple[int, int]:
+        key = (current, mask)
+        mirror_key = (self._mirror(current), self._mirror(mask))
+        return key if key <= mirror_key else mirror_key
+
+
 def build_oracle(
     backend: str = "minimax",
     *,
@@ -79,7 +224,5 @@ def build_oracle(
     if backend_name == "minimax":
         return MinimaxOracle(depth=depth, use_tt=use_tt)
     if backend_name == "pons":
-        raise NotImplementedError(
-            "oracle backend 'pons' is not implemented yet",
-        )
+        return PonsOracle(use_tt=use_tt)
     raise ValueError(f"unknown oracle backend: {backend}")
