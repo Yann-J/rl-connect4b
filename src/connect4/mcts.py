@@ -76,11 +76,12 @@ def _inject_root_dirichlet(
     root: Node,
     alpha: float,
     eps: float,
+    rng: np.random.Generator,
 ) -> None:
     if not root.children:
         return
     moves = list(root.children.keys())
-    noise = np.random.default_rng().dirichlet(
+    noise = rng.dirichlet(
         np.full((len(moves),), alpha, dtype=np.float32),
     )
     for idx, move in enumerate(moves):
@@ -118,7 +119,10 @@ def select_move(
     dirichlet_alpha: float = 1.0,
     dirichlet_eps: float = 0.25,
     c_puct: float = 1.5,
+    rng: np.random.Generator | None = None,
 ) -> tuple[int, np.ndarray]:
+    if rng is None:
+        rng = np.random.default_rng()
     legal = legal_moves(pos)
     if not legal:
         return -1, np.zeros((7,), dtype=np.float32)
@@ -131,6 +135,7 @@ def select_move(
             root,
             alpha=dirichlet_alpha,
             eps=dirichlet_eps,
+            rng=rng,
         )
 
     for _ in range(max(1, sims)):
@@ -149,5 +154,5 @@ def select_move(
     else:
         probs = visit_pi.copy()
         probs = probs / np.clip(probs.sum(), 1e-8, None)
-        move = int(np.random.default_rng().choice(np.arange(7), p=probs))
+        move = int(rng.choice(np.arange(7), p=probs))
     return move, visit_pi

@@ -13,13 +13,21 @@ league:
   current_vs_current_prob: 0.5
 eval:
   enabled: true
-  games: 20
-  mcts_sims_eval: 400
-  heldout_size: 10000
+  games: 10
+  mcts_sims_eval: 128
+  heldout_size: 1024
   heldout_seed: 0
   heldout_dataset_path: data/heldout_positions_v1.json
   league_games_per_pair: 2
-  eval_interval_steps: 100
+  minimax_depths: [2, 4]
+  oracle_depth: 6
+  eval_interval_steps: 500
+  full_panel_every: 5
+  quick:
+    games: 6
+    mcts_sims_eval: 64
+    heldout_size: 256
+    minimax_depths: [2]
 train:
   epochs: 1
   steps_per_1k_positions: 100
@@ -31,3 +39,5 @@ output:
   dir: checkpoints/small
 logging:
   tensorboard_dir: checkpoints/small/runs
+  train_log_every_steps: 10
+  selfplay_log_every_games: 10

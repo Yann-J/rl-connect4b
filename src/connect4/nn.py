@@ -187,10 +187,9 @@ class TinyNet:
         safe_pi = safe_pi / safe_pi.sum(dim=1, keepdim=True).clamp_min(1e-8)
         policy_loss = -(safe_pi * log_probs).sum(dim=1).mean()
         value_loss = F.mse_loss(values, z_t)
-        l2_term = torch.tensor(0.0, device=self.device)
-        for p in self.model.parameters():
-            l2_term = l2_term + p.pow(2).sum()
-        loss = policy_loss + value_loss + 1e-4 * l2_term
+        # L2 regularization is already handled by optimizer
+        # weight_decay.
+        loss = policy_loss + value_loss
 
         self.optimizer.zero_grad()
         loss.backward()

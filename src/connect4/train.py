@@ -105,6 +105,8 @@ def run_training(config: dict) -> str:
         )
     train_step_idx = 0
     progress_every = int(config.get("logging", {}).get("progress_every_steps", 50))
+    train_log_every = int(config.get("logging", {}).get("train_log_every_steps", 10))
+    selfplay_log_every = int(config.get("logging", {}).get("selfplay_log_every_games", 10))
     last_async_step_time = time.perf_counter()
     last_train_step_time = time.perf_counter()
     selfplay_sims = int(config["selfplay"].get("mcts_sims_selfplay", 100))
@@ -189,28 +191,35 @@ def run_training(config: dict) -> str:
                 opponent_net=opponent_net,
                 current_player=current_player,
                 sims=int(config["selfplay"].get("mcts_sims_selfplay", 100)),
+                rng=rng,
             )
             for sample in samples:
                 buffer.add(*sample)
             game_dt = time.perf_counter() - game_t0
             game_sims = max(1, len(samples)) * selfplay_sims
-            writer.add_scalar("selfplay/game_length", len(samples), game_idx)
-            writer.add_scalar(
-                "selfplay/games_per_s",
-                (1.0 / game_dt) if game_dt > 0.0 else 0.0,
-                game_idx,
+            should_log_selfplay = (
+                selfplay_log_every <= 1
+                or (game_idx + 1) % selfplay_log_every == 0
+                or (game_idx + 1) == int(config["selfplay"]["games"])
             )
-            writer.add_scalar(
-                "selfplay/sims_per_s",
-                (game_sims / game_dt) if game_dt > 0.0 else 0.0,
-                game_idx,
-            )
-            writer.add_scalar(
-                "selfplay/draw",
-                float(all(np.isclose(s[2], 0.0) for s in samples)),
-                game_idx,
-            )
-            writer.add_scalar("buffer/size", len(buffer), game_idx)
+            if should_log_selfplay:
+                writer.add_scalar("selfplay/game_length", len(samples), game_idx)
+                writer.add_scalar(
+                    "selfplay/games_per_s",
+                    (1.0 / game_dt) if game_dt > 0.0 else 0.0,
+                    game_idx,
+                )
+                writer.add_scalar(
+                    "selfplay/sims_per_s",
+                    (game_sims / game_dt) if game_dt > 0.0 else 0.0,
+                    game_idx,
+                )
+                writer.add_scalar(
+                    "selfplay/draw",
+                    float(all(np.isclose(s[2], 0.0) for s in samples)),
+                    game_idx,
+                )
+                writer.add_scalar("buffer/size", len(buffer), game_idx)
         total_dt = time.perf_counter() - selfplay_stage_start
         total_games = int(config["selfplay"]["games"])
         total_sims = max(1, total_games) * selfplay_sims
@@ -235,13 +244,18 @@ def run_training(config: dict) -> str:
                 dt = now - last_async_step_time
                 fps_async = 1.0 / dt if dt > 0 else 0.0
                 last_async_step_time = now
-                writer.add_scalar("train/loss_async", loss, train_step_idx)
-                writer.add_scalar(
-                    "train/grad_norm_async",
-                    model.last_grad_norm,
-                    train_step_idx,
+                should_log_train = (
+                    train_log_every <= 1
+                    or train_step_idx % train_log_every == 0
                 )
-                writer.add_scalar("train/fps_async", fps_async, train_step_idx)
+                if should_log_train:
+                    writer.add_scalar("train/loss_async", loss, train_step_idx)
+                    writer.add_scalar(
+                        "train/grad_norm_async",
+                        model.last_grad_norm,
+                        train_step_idx,
+                    )
+                    writer.add_scalar("train/fps_async", fps_async, train_step_idx)
                 train_step_idx += 1
             else:
                 _ = fut.running()
@@ -321,21 +335,27 @@ def run_training(config: dict) -> str:
             dt = now - last_train_step_time
             fps = 1.0 / dt if dt > 0 else 0.0
             last_train_step_time = now
-            writer.add_scalar("train/loss", loss, train_step_idx)
-            writer.add_scalar("train/grad_norm", model.last_grad_norm, train_step_idx)
-            writer.add_scalar("train/fps", fps, train_step_idx)
-            writer.add_scalar("train/lr", current_lr, train_step_idx)
+            should_log_train = (
+                train_log_every <= 1
+                or train_step_idx % train_log_every == 0
+            )
+            if should_log_train:
+                writer.add_scalar("train/loss", loss, train_step_idx)
+                writer.add_scalar("train/grad_norm", model.last_grad_norm, train_step_idx)
+                writer.add_scalar("train/fps", fps, train_step_idx)
+                writer.add_scalar("train/lr", current_lr, train_step_idx)
             nan_inf_count = int(
                 np.isnan(x).sum()
                 + np.isinf(x).sum()
                 + np.isnan(pi).sum()
                 + np.isinf(pi).sum(),
             )
-            writer.add_scalar(
-                "diag/nan_inf_count_train_batch",
-                nan_inf_count,
-                train_step_idx,
-            )
+            if should_log_train:
+                writer.add_scalar(
+                    "diag/nan_inf_count_train_batch",
+                    nan_inf_count,
+                    train_step_idx,
+                )
             if wandb_run is not None:
                 wandb_run.log(
                     {
