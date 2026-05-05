@@ -1,7 +1,9 @@
 numpy>=2.0.0
+onnxruntime>=1.18.0
 PyYAML>=6.0.0
 torch>=2.3.0
 tensorboard>=2.16.0
+kaggle-environments>=1.16.0
 
 [dev]
 pytest>=8.0.0

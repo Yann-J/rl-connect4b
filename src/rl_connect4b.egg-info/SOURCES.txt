@@ -1,8 +1,11 @@
 pyproject.toml
 src/connect4/__init__.py
+src/connect4/eval.py
 src/connect4/game.py
+src/connect4/league.py
 src/connect4/mcts.py
 src/connect4/nn.py
+src/connect4/oracle.py
 src/connect4/play.py
 src/connect4/replay_buffer.py
 src/connect4/selfplay.py
@@ -14,4 +17,5 @@ src/rl_connect4b.egg-info/requires.txt
 src/rl_connect4b.egg-info/top_level.txt
 tests/test_game.py
 tests/test_mcts_replay.py
+tests/test_oracle_league_onnx.py
 tests/test_smoke.py

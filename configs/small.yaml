@@ -7,9 +7,19 @@ selfplay:
   games: 64
   warmup_random_games: 1000
   mcts_sims_selfplay: 100
+league:
+  size: 10
+  current_vs_current_prob: 0.5
 eval:
+  enabled: true
+  games: 20
   mcts_sims_eval: 400
+  heldout_size: 10000
+  heldout_seed: 0
+  league_games_per_pair: 2
+  eval_interval_steps: 100
 train:
+  epochs: 1
   steps: 100
   batch_size: 128
   lr: 0.01
@@ -17,4 +27,3 @@ output:
   dir: checkpoints/small
 logging:
   tensorboard_dir: checkpoints/small/runs
-

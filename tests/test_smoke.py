@@ -72,10 +72,15 @@ def test_training_writes_tensorboard_events(tmp_path: Path) -> None:
         "selfplay": {"games": 4, "warmup_random_games": 4},
         "train": {"steps": 4, "batch_size": 8, "lr": 0.01},
         "output": {"dir": str(out_dir)},
-        "logging": {"tensorboard_dir": str(out_dir / "runs"), "run_name": "test-run"},
+        "logging": {
+            "tensorboard_dir": str(out_dir / "runs"),
+            "run_name": "test-run",
+        },
     }
     ckpt = run_training(cfg)
     assert Path(ckpt).exists()
-    events = list((out_dir / "runs" / "test-run").glob("events.out.tfevents.*"))
+    assert (out_dir / "model.onnx").exists()
+    events = list(
+        (out_dir / "runs" / "test-run").glob("events.out.tfevents.*"),
+    )
     assert events
-

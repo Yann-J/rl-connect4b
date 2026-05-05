@@ -3,8 +3,10 @@ Name: rl-connect4b
 Version: 0.1.0
 Requires-Python: >=3.11
 Requires-Dist: numpy>=2.0.0
+Requires-Dist: onnxruntime>=1.18.0
 Requires-Dist: PyYAML>=6.0.0
 Requires-Dist: torch>=2.3.0
 Requires-Dist: tensorboard>=2.16.0
+Requires-Dist: kaggle-environments>=1.16.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
