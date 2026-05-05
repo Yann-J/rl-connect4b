@@ -13,17 +13,22 @@ league:
   current_vs_current_prob: 0.5
 eval:
   enabled: true
-  games: 40
-  mcts_sims_eval: 400
-  heldout_size: 10000
+  games: 20
+  mcts_sims_eval: 100
+  heldout_size: 512
   heldout_seed: 0
   heldout_dataset_path: data/heldout_positions_v1.json
   league_games_per_pair: 2
-  minimax_depths: [2, 4, 6, 8]
-  oracle_depth: 10
+  minimax_depths: [2, 4, 6]
+  oracle_depth: 6
   oracle_backend: minimax
-  eval_interval_steps: 1000
-  full_panel_every: 1
+  eval_interval_steps: 2000
+  full_panel_every: 5
+  quick:
+    games: 8
+    mcts_sims_eval: 64
+    heldout_size: 128
+    minimax_depths: [2, 4]
 train:
   epochs: 1
   steps_per_1k_positions: 100
