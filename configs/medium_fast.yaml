@@ -1,0 +1,41 @@
+seed: 0
+model:
+  channels: 128
+  blocks: 10
+buffer:
+  capacity: 50000
+selfplay:
+  games: 128
+  warmup_random_games: 1000
+  mcts_sims_selfplay: 200
+league:
+  size: 10
+  current_vs_current_prob: 0.5
+eval:
+  enabled: true
+  heldout_seed: 0
+  eval_interval_steps: 500
+  full_panel_every: 6
+  quick:
+    games: 6
+    mcts_sims_eval: 64
+    heldout_size: 0
+    league_games_per_pair: 1
+    minimax_depths: [2, 4]
+    oracle_depth: 8
+  full:
+    games: 16
+    mcts_sims_eval: 200
+    heldout_size: 512
+    league_games_per_pair: 1
+    minimax_depths: [2, 4, 6]
+    oracle_depth: 10
+train:
+  epochs: 1
+  steps: 20000
+  batch_size: 256
+  lr: 0.001
+output:
+  dir: checkpoints/medium_fast
+logging:
+  tensorboard_dir: checkpoints/medium_fast/runs

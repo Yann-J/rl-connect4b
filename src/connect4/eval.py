@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 import numpy as np
 from types import SimpleNamespace
+from typing import Any
 
 from .game import Position, apply_move, canonicalize, is_terminal, legal_moves, new_game
 from .league import LeaguePool
 from .mcts import select_move
 from .nn import TinyNet
-from .oracle import MinimaxOracle
+from .oracle import MinimaxOracle, OracleResult
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,11 @@ class EvalConfig:
     heldout_size: int = 10000
     heldout_seed: int = 0
     league_games_per_pair: int = 2
+    minimax_depths: tuple[int, ...] = (2, 4, 6, 8)
+    oracle_depth: int = 10
+
+
+_HELDOUT_LABEL_CACHE: dict[tuple[int, int, int], tuple[list[Position], list[OracleResult], float]] = {}
 
 
 def _play_vs_minimax(net: TinyNet, depth: int, games: int, sims: int) -> float:
@@ -38,6 +45,48 @@ def _play_vs_minimax(net: TinyNet, depth: int, games: int, sims: int) -> float:
                 move = oracle.evaluate(pos).best_move
             pos = apply_move(pos, move)
     return wins / max(1, games)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "__dict__"):
+        return dict(vars(value))
+    return {}
+
+
+def _as_namespace(value: Any) -> SimpleNamespace:
+    if isinstance(value, SimpleNamespace):
+        return value
+    if isinstance(value, dict):
+        return SimpleNamespace(**value)
+    if hasattr(value, "__dict__"):
+        return SimpleNamespace(**vars(value))
+    return SimpleNamespace()
+
+
+def _call_kaggle_agent(
+    agent_fn: Any,
+    obs_dict: dict[str, Any],
+    cfg_raw: Any,
+) -> int:
+    cfg_dict = _as_dict(cfg_raw)
+    cfg_ns = _as_namespace(cfg_raw)
+    attempts = [
+        (obs_dict, cfg_raw),
+        (_as_namespace(obs_dict), cfg_raw),
+        (obs_dict, cfg_dict),
+        (_as_namespace(obs_dict), cfg_ns),
+    ]
+    last_err: Exception | None = None
+    for obs_arg, cfg_arg in attempts:
+        try:
+            return int(agent_fn(obs_arg, cfg_arg))
+        except (AttributeError, TypeError, KeyError) as err:
+            last_err = err
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("failed to call kaggle agent")
 
 
 def _play_vs_kaggle_agent(net: TinyNet, agent_name: str, games: int, sims: int) -> tuple[float, float, float]:
@@ -74,8 +123,8 @@ def _play_vs_kaggle_agent(net: TinyNet, agent_name: str, games: int, sims: int) 
                 board = np.where(pos.board == 1, 1, np.where(pos.board == -1, 2, 0)).astype(np.int8)
                 board_flat = [int(x) for x in board.reshape(-1)]
                 mark = 1 if pos.to_play == 1 else 2
-                obs = SimpleNamespace(board=board_flat, mark=mark)
-                move = int(env.agents[agent_name](obs, cfg))
+                obs = {"board": board_flat, "mark": mark}
+                move = _call_kaggle_agent(env.agents[agent_name], obs, cfg)
                 if move not in legal:
                     move = int(rng.choice(legal))
             total_moves += 1
@@ -88,15 +137,22 @@ def _policy_entropy(pi: np.ndarray) -> float:
     return float(-(clipped * np.log(clipped)).sum())
 
 
-def _heldout_metrics(net: TinyNet, heldout: list[Position], oracle: MinimaxOracle) -> tuple[float, float, int]:
+def _heldout_metrics_with_labels(
+    net: TinyNet,
+    heldout: list[Position],
+    oracle_labels: list[OracleResult],
+) -> tuple[float, float, int, float]:
     if not heldout:
-        return 0.0, 0.0, 0
+        return 0.0, 0.0, 0, 0.0
+    if len(heldout) != len(oracle_labels):
+        raise ValueError("heldout positions and oracle labels length mismatch")
     batch_size = 256
     agree = 0
     sqerr = 0.0
     nan_inf_count = 0
+    t0 = time.perf_counter()
     for start in range(0, len(heldout), batch_size):
-        chunk = heldout[start : start + batch_size]
+        chunk = heldout[start:start + batch_size]
         x = np.stack([canonicalize(pos) for pos in chunk], axis=0).astype(np.float32, copy=False)
         mask = np.zeros((len(chunk), 7), dtype=np.float32)
         for i, pos in enumerate(chunk):
@@ -107,10 +163,30 @@ def _heldout_metrics(net: TinyNet, heldout: list[Position], oracle: MinimaxOracl
             v0 = float(v_batch[i])
             nan_inf_count += int(np.isnan(pi0).any() or np.isinf(pi0).any() or not np.isfinite(v0))
             pred_move = int(np.argmax(pi0))
-            target = oracle.evaluate(pos)
+            target = oracle_labels[start + i]
             agree += int(pred_move == target.best_move)
             sqerr += (v0 - target.value) ** 2
-    return agree / len(heldout), sqerr / len(heldout), nan_inf_count
+    forward_seconds = time.perf_counter() - t0
+    return agree / len(heldout), sqerr / len(heldout), nan_inf_count, forward_seconds
+
+
+def _get_heldout_with_oracle_labels(
+    heldout_size: int,
+    heldout_seed: int,
+    oracle_depth: int,
+) -> tuple[list[Position], list[OracleResult], float, bool]:
+    key = (heldout_size, heldout_seed, oracle_depth)
+    cached = _HELDOUT_LABEL_CACHE.get(key)
+    if cached is not None:
+        heldout, labels, label_time_s = cached
+        return heldout, labels, label_time_s, True
+    heldout = make_heldout_dataset(size=heldout_size, seed=heldout_seed)
+    oracle = MinimaxOracle(depth=oracle_depth, use_tt=True)
+    t0 = time.perf_counter()
+    labels = [oracle.evaluate(pos) for pos in heldout]
+    label_time_s = time.perf_counter() - t0
+    _HELDOUT_LABEL_CACHE[key] = (heldout, labels, label_time_s)
+    return heldout, labels, label_time_s, False
 
 
 def _play_head_to_head(net_a: TinyNet, net_b: TinyNet, games: int, sims: int) -> tuple[int, int, int]:
@@ -173,43 +249,84 @@ def _league_elo(
 
 
 def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = None) -> dict[str, float]:
+    eval_start = time.perf_counter()
     metrics: dict[str, float] = {}
+    total_eval_games = 0
+    t0 = time.perf_counter()
     wr_random, _, _ = _play_vs_kaggle_agent(net, "random", games=cfg.games, sims=cfg.mcts_sims_eval)
+    random_time_s = time.perf_counter() - t0
+    total_eval_games += cfg.games
     metrics["winrate_vs_random"] = wr_random
+    t0 = time.perf_counter()
     wr_negamax, draw_rate, mean_len = _play_vs_kaggle_agent(
         net,
         "negamax",
         games=cfg.games,
         sims=cfg.mcts_sims_eval,
     )
+    negamax_time_s = time.perf_counter() - t0
+    total_eval_games += cfg.games
     metrics["winrate_vs_negamax"] = wr_negamax
     metrics["diag_draw_rate"] = draw_rate
     metrics["diag_mean_game_length"] = mean_len
-    for depth in (2, 4, 6, 8):
+    t0 = time.perf_counter()
+    for depth in cfg.minimax_depths:
         metrics[f"winrate_vs_minimax_d{depth}"] = _play_vs_minimax(
             net,
             depth=depth,
             games=cfg.games,
             sims=cfg.mcts_sims_eval,
         )
-    heldout = make_heldout_dataset(size=cfg.heldout_size, seed=cfg.heldout_seed)
-    oracle = MinimaxOracle(depth=10, use_tt=True)
-    acc, mse, nan_inf = _heldout_metrics(net, heldout, oracle)
+        total_eval_games += cfg.games
+    minimax_sweep_time_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    heldout, oracle_labels, label_time_s, label_cache_hit = _get_heldout_with_oracle_labels(
+        heldout_size=cfg.heldout_size,
+        heldout_seed=cfg.heldout_seed,
+        oracle_depth=cfg.oracle_depth,
+    )
+    heldout_prep_time_s = time.perf_counter() - t0
+    acc, mse, nan_inf, heldout_forward_time_s = _heldout_metrics_with_labels(
+        net,
+        heldout,
+        oracle_labels,
+    )
     metrics["near_optimal_move_accuracy"] = acc
     metrics["value_mse_vs_oracle"] = mse
     metrics["diag_nan_inf_count"] = float(nan_inf)
     start = new_game()
     _, pi0 = select_move(net, start, sims=cfg.mcts_sims_eval, selfplay=False)
     metrics["diag_root_policy_entropy"] = _policy_entropy(pi0)
+    league_time_s = 0.0
     if league is not None and len(league) > 0:
+        t0 = time.perf_counter()
         current_elo, league_mean_elo = _league_elo(
             net,
             league=league,
             games_per_pair=cfg.league_games_per_pair,
             sims=cfg.mcts_sims_eval,
         )
+        league_time_s = time.perf_counter() - t0
+        total_eval_games += cfg.league_games_per_pair * len(league)
         metrics["league_elo_current"] = current_elo
         metrics["league_elo_mean_pool"] = league_mean_elo
+    total_time_s = time.perf_counter() - eval_start
+    approx_eval_sims = total_eval_games * mean_len * cfg.mcts_sims_eval
+    metrics["diag_timing_random_games_s"] = random_time_s
+    metrics["diag_timing_negamax_games_s"] = negamax_time_s
+    metrics["diag_timing_minimax_sweep_s"] = minimax_sweep_time_s
+    metrics["diag_timing_heldout_prep_s"] = heldout_prep_time_s
+    metrics["diag_timing_heldout_oracle_label_s"] = label_time_s
+    metrics["diag_timing_heldout_forward_s"] = heldout_forward_time_s
+    metrics["diag_timing_league_elo_s"] = league_time_s
+    metrics["diag_timing_eval_total_s"] = total_time_s
+    metrics["diag_eval_games_per_s"] = (
+        total_eval_games / total_time_s if total_time_s > 0.0 else 0.0
+    )
+    metrics["diag_eval_sims_per_s"] = (
+        approx_eval_sims / total_time_s if total_time_s > 0.0 else 0.0
+    )
+    metrics["diag_heldout_oracle_cache_hit"] = 1.0 if label_cache_hit else 0.0
     return metrics
 
 

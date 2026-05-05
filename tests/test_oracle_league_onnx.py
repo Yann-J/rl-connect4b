@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import numpy as np
 import pytest
+import sys
+import types
 
 from connect4.game import apply_move, legal_moves, new_game
 from connect4.eval import EvalConfig, run_eval_panel
@@ -113,3 +115,42 @@ def test_eval_panel_includes_league_elo(tmp_path: Path) -> None:
     )
     assert "league_elo_current" in panel
     assert "league_elo_mean_pool" in panel
+
+
+def test_eval_panel_handles_kaggle_dict_and_namespace_obs(monkeypatch) -> None:
+    class FakeEnv:
+        def __init__(self) -> None:
+            self.configuration = {"columns": 7}
+            self.agents = {
+                "random": self.random_agent,
+                "negamax": self.negamax_agent,
+            }
+
+        @staticmethod
+        def random_agent(obs, cfg):
+            legal = [c for c in range(cfg["columns"]) if obs["board"][c] == 0]
+            return legal[0]
+
+        @staticmethod
+        def negamax_agent(obs, cfg):
+            legal = [c for c in range(cfg.columns) if obs.board[c] == 0]
+            return legal[0]
+
+    fake_module = types.SimpleNamespace(
+        make=lambda *_args, **_kwargs: FakeEnv(),
+    )
+    monkeypatch.setitem(sys.modules, "kaggle_environments", fake_module)
+    net = TinyNet(seed=0)
+    panel = run_eval_panel(
+        net,
+        EvalConfig(
+            games=1,
+            mcts_sims_eval=2,
+            heldout_size=0,
+            heldout_seed=0,
+            league_games_per_pair=1,
+        ),
+        league=None,
+    )
+    assert "winrate_vs_random" in panel
+    assert "winrate_vs_negamax" in panel
