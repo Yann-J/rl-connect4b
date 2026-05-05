@@ -58,11 +58,6 @@
             aria-hidden="true"
           />
         </button>
-        <label for="ai-mode" class="sr-only">AI mode</label>
-        <select id="ai-mode" class="secondary">
-          <option value="fast">Fast (policy)</option>
-          <option value="strong">Strong (MCTS)</option>
-        </select>
       </div>
       <div id="status">Loading ONNX model...</div>
       <section id="board" class="board" aria-label="Connect-4 board"></section>
@@ -72,8 +67,15 @@
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="modal-content">
         <h2 id="settings-title">Settings</h2>
+        <label class="field-label" for="ai-mode">AI mode</label>
+        <select id="ai-mode" class="secondary">
+          <option value="fast">Fast (policy)</option>
+          <option value="strong">Strong (MCTS)</option>
+        </select>
         <label class="field-label" for="model-name-input">Model file name</label>
         <input id="model-name-input" type="text" placeholder="policy.onnx" />
+        <label class="field-label" for="mcts-sims-input">MCTS simulations</label>
+        <input id="mcts-sims-input" type="number" min="1" step="1" placeholder="80" />
         <div class="modal-actions">
           <button id="cancel-settings" class="secondary" type="button">Cancel</button>
           <button id="save-settings" type="button">Save</button>

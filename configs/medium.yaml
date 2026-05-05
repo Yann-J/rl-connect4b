@@ -1,6 +1,7 @@
 seed: 0
 model:
-  hidden: 128
+  channels: 128
+  blocks: 10
 buffer:
   capacity: 50000
 selfplay:

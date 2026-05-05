@@ -28,6 +28,11 @@ select.secondary {
   background: #2f3242;
   color: #fff;
 }
+.modal-content select.secondary {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -164,7 +169,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   margin-bottom: 6px;
   font-size: 0.92rem;
 }
-#model-name-input {
+#model-name-input,
+#mcts-sims-input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.18);

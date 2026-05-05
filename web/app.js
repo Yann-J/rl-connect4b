@@ -18,6 +18,7 @@ const newAiFirstBtn = document.getElementById("new-ai-first");
 const openSettingsBtn = document.getElementById("open-settings");
 const settingsModalEl = document.getElementById("settings-modal");
 const modelNameInput = document.getElementById("model-name-input");
+const mctsSimsInput = document.getElementById("mcts-sims-input");
 const cancelSettingsBtn = document.getElementById("cancel-settings");
 const saveSettingsBtn = document.getElementById("save-settings");
 const modeSelectEl = document.getElementById("ai-mode");
@@ -37,8 +38,13 @@ const DEFAULT_MODEL_NAME = "policy.onnx";
 const MODE_STORAGE_KEY = "connect4-ai-mode";
 const FAST_MODE = "fast";
 const STRONG_MODE = "strong";
+const MCTS_SIMS_STORAGE_KEY = "connect4-mcts-sims";
+const DEFAULT_MCTS_SIMS = 80;
+const MIN_MCTS_SIMS = 1;
+const MAX_MCTS_SIMS = 5000;
 let modelName = loadModelNameSetting();
 let aiMode = loadAiModeSetting();
+let mctsSimulations = loadMctsSimulationsSetting();
 
 function normalizeModelName(rawName) {
   const trimmed = String(rawName || "").trim();
@@ -134,7 +140,7 @@ async function chooseAiColumn() {
   if (legal.length === 0) return -1;
 
   if (aiMode === STRONG_MODE) {
-    return runMcts(session, ort, board, aiPiece, 80);
+    return runMcts(session, ort, board, aiPiece, mctsSimulations);
   }
 
   const obs = new ort.Tensor("float32", buildObsForAi(), [1, 2, ROWS, COLS]);
@@ -161,7 +167,10 @@ function updateStatus(text) {
 }
 
 function updateLegend() {
-  const modeLabel = aiMode === STRONG_MODE ? "MCTS strong" : "policy fast";
+  const modeLabel =
+    aiMode === STRONG_MODE
+      ? `MCTS strong (${mctsSimulations} sims)`
+      : "policy fast";
   legendEl.textContent = `🟡 = you  🔴 = ${modeLabel} (\`web/${modelName}\`)`;
 }
 
@@ -176,6 +185,24 @@ function loadAiModeSetting() {
 function saveAiModeSetting(nextMode) {
   const normalized = normalizeAiMode(nextMode);
   window.localStorage.setItem(MODE_STORAGE_KEY, normalized);
+  return normalized;
+}
+
+function normalizeMctsSimulations(rawValue) {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_MCTS_SIMS;
+  return Math.max(MIN_MCTS_SIMS, Math.min(MAX_MCTS_SIMS, parsed));
+}
+
+function loadMctsSimulationsSetting() {
+  return normalizeMctsSimulations(
+    window.localStorage.getItem(MCTS_SIMS_STORAGE_KEY),
+  );
+}
+
+function saveMctsSimulationsSetting(nextValue) {
+  const normalized = normalizeMctsSimulations(nextValue);
+  window.localStorage.setItem(MCTS_SIMS_STORAGE_KEY, String(normalized));
   return normalized;
 }
 
@@ -476,10 +503,11 @@ async function loadModel() {
 }
 
 function openSettingsModal() {
+  modeSelectEl.value = aiMode;
   modelNameInput.value = modelName;
+  mctsSimsInput.value = String(mctsSimulations);
   settingsModalEl.classList.remove("hidden");
-  modelNameInput.focus();
-  modelNameInput.select();
+  modeSelectEl.focus();
 }
 
 function closeSettingsModal() {
@@ -487,15 +515,26 @@ function closeSettingsModal() {
 }
 
 async function handleSaveSettings() {
+  const nextAiMode = saveAiModeSetting(modeSelectEl.value);
   const nextModelName = saveModelNameSetting(modelNameInput.value);
-  if (nextModelName === modelName) {
-    closeSettingsModal();
+  const nextMctsSimulations = saveMctsSimulationsSetting(mctsSimsInput.value);
+  const modeChanged = nextAiMode !== aiMode;
+  const modelChanged = nextModelName !== modelName;
+  const simsChanged = nextMctsSimulations !== mctsSimulations;
+
+  aiMode = nextAiMode;
+  modelName = nextModelName;
+  mctsSimulations = nextMctsSimulations;
+  updateLegend();
+  render();
+  closeSettingsModal();
+  if (modelChanged) {
+    await loadModel();
     return;
   }
-  modelName = nextModelName;
-  updateLegend();
-  closeSettingsModal();
-  await loadModel();
+  if (modeChanged || simsChanged) {
+    await maybeAiMove();
+  }
 }
 
 newHumanFirstBtn.addEventListener("click", () => newGame(true));
@@ -514,11 +553,14 @@ modelNameInput.addEventListener("keydown", (event) => {
     closeSettingsModal();
   }
 });
-modeSelectEl.addEventListener("change", async (event) => {
-  aiMode = saveAiModeSetting(event.target.value);
-  updateLegend();
-  render();
-  await maybeAiMove();
+mctsSimsInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    handleSaveSettings();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeSettingsModal();
+  }
 });
 settingsModalEl.addEventListener("click", (event) => {
   if (event.target === settingsModalEl) closeSettingsModal();

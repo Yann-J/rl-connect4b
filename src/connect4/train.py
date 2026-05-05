@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import random
+import time
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -21,7 +22,12 @@ def run_training(config: dict) -> str:
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
 
-    model = TinyNet(hidden=int(config["model"]["hidden"]), seed=seed)
+    model_cfg = config.get("model", {})
+    model = TinyNet(
+        channels=int(model_cfg.get("channels", model_cfg.get("hidden", 64))),
+        blocks=int(model_cfg.get("blocks", 5)),
+        seed=seed,
+    )
     buffer = ReplayBuffer(capacity=int(config["buffer"]["capacity"]))
     warmup_games = int(config["selfplay"].get("warmup_random_games", 1000))
     output_dir = Path(config["output"]["dir"])
@@ -60,6 +66,8 @@ def run_training(config: dict) -> str:
         )
     train_step_idx = 0
     progress_every = int(config.get("logging", {}).get("progress_every_steps", 50))
+    last_async_step_time = time.perf_counter()
+    last_train_step_time = time.perf_counter()
 
     for _ in range(warmup_games):
         pos = new_game()
@@ -114,8 +122,13 @@ def run_training(config: dict) -> str:
             if len(buffer) >= int(config["train"]["batch_size"]):
                 x, mask, pi, z = buffer.sample(batch_size=int(config["train"]["batch_size"]), rng=rng)
                 loss = model.train_step(x, mask, pi, z, lr=float(config["train"]["lr"]))
+                now = time.perf_counter()
+                dt = now - last_async_step_time
+                fps_async = 1.0 / dt if dt > 0 else 0.0
+                last_async_step_time = now
                 writer.add_scalar("train/loss_async", loss, train_step_idx)
                 writer.add_scalar("train/grad_norm_async", model.last_grad_norm, train_step_idx)
+                writer.add_scalar("train/fps_async", fps_async, train_step_idx)
                 train_step_idx += 1
             else:
                 _ = fut.running()
@@ -157,8 +170,13 @@ def run_training(config: dict) -> str:
         for _ in range(this_epoch_steps):
             x, mask, pi, z = buffer.sample(batch_size=int(config["train"]["batch_size"]), rng=rng)
             loss = model.train_step(x, mask, pi, z, lr=float(config["train"]["lr"]))
+            now = time.perf_counter()
+            dt = now - last_train_step_time
+            fps = 1.0 / dt if dt > 0 else 0.0
+            last_train_step_time = now
             writer.add_scalar("train/loss", loss, train_step_idx)
             writer.add_scalar("train/grad_norm", model.last_grad_norm, train_step_idx)
+            writer.add_scalar("train/fps", fps, train_step_idx)
             nan_inf_count = int(np.isnan(x).sum() + np.isinf(x).sum() + np.isnan(pi).sum() + np.isinf(pi).sum())
             writer.add_scalar("diag/nan_inf_count_train_batch", nan_inf_count, train_step_idx)
             if wandb_run is not None:
