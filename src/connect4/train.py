@@ -141,6 +141,7 @@ def run_training(config: dict) -> str:
     eval_enabled = bool(eval_cfg.get("enabled", False))
     eval_interval = int(eval_cfg.get("eval_interval_steps", max(1, int(config["train"]["steps"]))))
     eval_once_at_start = bool(eval_cfg.get("eval_once_at_start", True))
+    full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
     epochs = int(config["train"].get("epochs", 1))
     total_steps = int(config["train"]["steps"])
     steps_per_epoch = max(1, total_steps // max(1, epochs))
@@ -191,17 +192,22 @@ def run_training(config: dict) -> str:
             train_step_idx += 1
             if eval_enabled and completed_steps % eval_interval == 0:
                 print(f"[eval] running eval at step={completed_steps}")
+                run_idx = completed_steps // eval_interval
+                full_panel = (run_idx % full_panel_every) == 0
+                heldout_size = int(eval_cfg.get("heldout_size", 10000)) if full_panel else 0
                 panel = run_eval_panel(
                     model,
                     EvalConfig(
                         games=int(eval_cfg.get("games", 200)),
                         mcts_sims_eval=int(eval_cfg.get("mcts_sims_eval", 400)),
-                        heldout_size=int(eval_cfg.get("heldout_size", 10000)),
+                        heldout_size=heldout_size,
                         heldout_seed=int(eval_cfg.get("heldout_seed", seed)),
                         league_games_per_pair=int(eval_cfg.get("league_games_per_pair", 2)),
                     ),
                     league=league,
                 )
+                if not full_panel:
+                    print("[eval] quick panel (heldout skipped)")
                 for key, value in panel.items():
                     writer.add_scalar(f"eval/{key}", value, train_step_idx)
                 writer.flush()

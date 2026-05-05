@@ -13,14 +13,15 @@ league:
   current_vs_current_prob: 0.5
 eval:
   enabled: true
-  games: 20
-  mcts_sims_eval: 200
-  heldout_size: 1000
+  games: 8
+  mcts_sims_eval: 64
+  heldout_size: 64
   heldout_seed: 0
-  league_games_per_pair: 2
-  eval_interval_steps: 500
-  initial_games: 10
-  initial_heldout_size: 128
+  league_games_per_pair: 1
+  eval_interval_steps: 1000
+  full_panel_every: 3
+  initial_games: 4
+  initial_heldout_size: 16
 train:
   epochs: 1
   steps: 20000
