@@ -120,6 +120,12 @@ def run_training(config: dict) -> str:
     progress_every = int(config.get("logging", {}).get("progress_every_steps", 50))
     train_log_every = int(config.get("logging", {}).get("train_log_every_steps", 10))
     selfplay_log_every = int(config.get("logging", {}).get("selfplay_log_every_games", 10))
+    buffer_capacity = int(config["buffer"]["capacity"])
+    total_steps = planned_training_steps(config)
+    selfplay_mcts_games_total = 0
+    replay_rows_mcts_total = 0
+    selfplay_refresh_count = 0
+    last_refresh_batch_games = 0
     last_async_step_time = time.perf_counter()
     last_train_step_time = time.perf_counter()
     selfplay_sims = int(config["selfplay"].get("mcts_sims_selfplay", 100))
@@ -139,6 +145,27 @@ def run_training(config: dict) -> str:
         1,
         int(config["selfplay"].get("games_per_refresh", config["selfplay"]["games"])),
     )
+
+    def log_progress_scalars(*, completed_steps_val: int | None = None) -> None:
+        buf_n = len(buffer)
+        payload: dict[str, float] = {
+            "progress/buffer_size": float(buf_n),
+            "progress/buffer_fill_ratio": float(buf_n) / float(max(1, buffer_capacity)),
+            "progress/games_warmup": float(warmup_games),
+            "progress/games_selfplay_mcts": float(selfplay_mcts_games_total),
+            "progress/replay_rows_mcts": float(replay_rows_mcts_total),
+            "progress/selfplay_refreshes": float(selfplay_refresh_count),
+            "progress/last_refresh_batch_games": float(last_refresh_batch_games),
+        }
+        if completed_steps_val is not None:
+            payload["progress/completed_steps"] = float(completed_steps_val)
+            payload["progress/main_fraction"] = float(completed_steps_val) / float(
+                max(1, total_steps),
+            )
+        for key, val in payload.items():
+            writer.add_scalar(key, val, train_step_idx)
+        if wandb_run is not None:
+            wandb_run.log(payload, step=train_step_idx)
 
     def ensure_finite_loss(
         loss: float,
@@ -207,6 +234,7 @@ def run_training(config: dict) -> str:
     writer.add_scalar("league/size", len(league), 0)
 
     def run_selfplay_batch(num_games: int, *, tb_step: int, phase: str) -> None:
+        nonlocal selfplay_mcts_games_total, replay_rows_mcts_total
         selfplay_stage_start = time.perf_counter()
         for game_idx in range(num_games):
             game_t0 = time.perf_counter()
@@ -228,6 +256,8 @@ def run_training(config: dict) -> str:
             )
             for sample in samples:
                 buffer.add(*sample)
+            selfplay_mcts_games_total += 1
+            replay_rows_mcts_total += 2 * int(len(samples))
             game_dt = time.perf_counter() - game_t0
             game_sims = max(1, len(samples)) * selfplay_sims
             should_log_selfplay = (
@@ -281,6 +311,9 @@ def run_training(config: dict) -> str:
             f"games/s={(num_games / total_dt) if total_dt > 0.0 else 0.0:.2f} "
             f"sims/s={(total_sims / total_dt) if total_dt > 0.0 else 0.0:.2f}",
         )
+        if phase == "refresh" and total_dt > 0.0:
+            writer.add_scalar("selfplay/refresh/batch_games_per_s", num_games / total_dt, tb_step)
+            writer.add_scalar("selfplay/refresh/batch_wall_s", total_dt, tb_step)
 
     def produce_games() -> None:
         run_selfplay_batch(
@@ -315,6 +348,7 @@ def run_training(config: dict) -> str:
                         train_step_idx,
                     )
                     writer.add_scalar("train/fps_async", fps_async, train_step_idx)
+                    log_progress_scalars()
                 train_step_idx += 1
             else:
                 _ = fut.running()
@@ -334,7 +368,6 @@ def run_training(config: dict) -> str:
     full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
     epochs = int(config["train"].get("epochs", 1))
     train_cfg = config["train"]
-    total_steps = planned_training_steps(config)
     steps_per_epoch = max(1, total_steps // max(1, epochs))
     remainder_steps = total_steps % max(1, epochs)
     eval_interval = int(eval_interval_raw) if eval_interval_raw is not None else total_steps
@@ -349,6 +382,9 @@ def run_training(config: dict) -> str:
             f"capping to {capped} so periodic eval runs (plus final step).",
         )
         eval_interval = capped
+    # Periodic eval is keyed off train_step_idx (every optimizer step, including async
+    # warmup during initial self-play), not completed_steps — so TB/wandb step axis
+    # matches eval_interval_steps in wall-clock optimizer steps.
     if selfplay_every_steps is not None and total_steps > 0 and selfplay_every_steps > total_steps:
         capped_sp = max(1, total_steps // 10)
         print(
@@ -425,6 +461,9 @@ def run_training(config: dict) -> str:
                     nan_inf_count,
                     train_step_idx,
                 )
+            completed_steps += 1
+            if should_log_train:
+                log_progress_scalars(completed_steps_val=completed_steps)
             if wandb_run is not None:
                 wandb_run.log(
                     {
@@ -434,7 +473,6 @@ def run_training(config: dict) -> str:
                     },
                     step=train_step_idx,
                 )
-            completed_steps += 1
             if progress_every > 0 and completed_steps % progress_every == 0:
                 print(
                     f"[train] step={completed_steps}/{total_steps} "
@@ -444,11 +482,14 @@ def run_training(config: dict) -> str:
                 writer.flush()
             train_step_idx += 1
             if eval_enabled and (
-                completed_steps % eval_interval == 0
+                train_step_idx % eval_interval == 0
                 or completed_steps == total_steps
             ):
-                print(f"[eval] running eval at step={completed_steps}")
-                run_idx = completed_steps // eval_interval
+                print(
+                    f"[eval] running eval train_step_idx={train_step_idx} "
+                    f"completed_steps={completed_steps}/{total_steps}",
+                )
+                run_idx = train_step_idx // eval_interval
                 full_panel = (run_idx % full_panel_every) == 0
                 eval_profile = "full" if full_panel else "quick"
                 eval_panel_cfg = _build_eval_cfg(eval_cfg, seed=seed, profile=eval_profile)
@@ -464,7 +505,8 @@ def run_training(config: dict) -> str:
                 writer.flush()
                 print(
                     "[eval] logged panel "
-                    f"profile={eval_profile} step={completed_steps} wall={eval_wall:.2f}s "
+                    f"profile={eval_profile} train_step_idx={train_step_idx} "
+                    f"completed_steps={completed_steps} wall={eval_wall:.2f}s "
                     f"games/s={panel.get('diag_eval_games_per_s', 0.0):.2f} "
                     f"sims/s={panel.get('diag_eval_sims_per_s', 0.0):.2f} "
                     f"heldout={panel.get('diag_timing_heldout_oracle_label_s', 0.0):.2f}s",
@@ -487,6 +529,8 @@ def run_training(config: dict) -> str:
                     tb_step=train_step_idx,
                     phase="refresh",
                 )
+                selfplay_refresh_count += 1
+                last_refresh_batch_games = games_per_refresh
                 writer.add_scalar("buffer/size_after_refresh", len(buffer), train_step_idx)
         current_snapshot = snapshot_league(epoch_idx=epoch_idx + 1)
         writer.add_scalar("league/size", len(league), train_step_idx)

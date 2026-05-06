@@ -42,5 +42,5 @@ output:
   dir: checkpoints/large
 logging:
   tensorboard_dir: checkpoints/large/runs
-  train_log_every_steps: 10
+  train_log_every_steps: 2
   selfplay_log_every_games: 10
