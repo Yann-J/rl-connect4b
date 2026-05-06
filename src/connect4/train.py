@@ -44,6 +44,7 @@ def _build_eval_cfg(eval_cfg: dict, seed: int, profile: str) -> EvalConfig:
     return EvalConfig(
         games=get("games", 200),
         mcts_sims_eval=get("mcts_sims_eval", 400),
+        kaggle_matches=bool(eval_cfg.get("kaggle_matches", True)),
         heldout_size=get("heldout_size", 10000),
         heldout_seed=int(eval_cfg.get("heldout_seed", seed)),
         league_games_per_pair=get("league_games_per_pair", 2),
@@ -499,6 +500,7 @@ def run_training(config: dict) -> str:
                         "train/loss": loss,
                         "train/grad_norm": model.last_grad_norm,
                         "train/lr": current_lr,
+                        "train/completed_steps": float(completed_steps),
                     },
                     step=train_step_idx,
                 )

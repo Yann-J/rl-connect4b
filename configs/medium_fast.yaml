@@ -13,6 +13,7 @@ league:
   current_vs_current_prob: 0.5
 eval:
   enabled: true
+  kaggle_matches: false
   heldout_seed: 0
   heldout_dataset_path: data/heldout_positions_v1.json
   eval_interval_steps: 500

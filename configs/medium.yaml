@@ -14,6 +14,7 @@ league:
   current_vs_current_prob: 0.5
 eval:
   enabled: true
+  kaggle_matches: false
   games: 20
   mcts_sims_eval: 100
   heldout_size: 512

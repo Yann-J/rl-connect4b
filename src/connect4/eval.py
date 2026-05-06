@@ -19,6 +19,7 @@ from .oracle import OracleResult, build_oracle
 class EvalConfig:
     games: int = 200
     mcts_sims_eval: int = 400
+    kaggle_matches: bool = True
     heldout_size: int = 10000
     heldout_seed: int = 0
     league_games_per_pair: int = 2
@@ -296,20 +297,32 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
     eval_start = time.perf_counter()
     metrics: dict[str, float] = {}
     total_eval_games = 0
-    t0 = time.perf_counter()
-    wr_random, _, _ = _play_vs_kaggle_agent(net, "random", games=cfg.games, sims=cfg.mcts_sims_eval)
-    random_time_s = time.perf_counter() - t0
-    total_eval_games += cfg.games
-    metrics["winrate_vs_random"] = wr_random
-    t0 = time.perf_counter()
-    wr_negamax, draw_rate, mean_len = _play_vs_kaggle_agent(
-        net,
-        "negamax",
-        games=cfg.games,
-        sims=cfg.mcts_sims_eval,
+    print(
+        "[eval] panel start "
+        f"games={cfg.games} sims={cfg.mcts_sims_eval} "
+        f"heldout={cfg.heldout_size} oracle_depth={cfg.oracle_depth}",
     )
-    negamax_time_s = time.perf_counter() - t0
-    total_eval_games += cfg.games
+    random_time_s = 0.0
+    negamax_time_s = 0.0
+    draw_rate = 0.0
+    mean_len = 0.0
+    wr_random = 0.0
+    wr_negamax = 0.0
+    if cfg.kaggle_matches:
+        t0 = time.perf_counter()
+        wr_random, _, _ = _play_vs_kaggle_agent(net, "random", games=cfg.games, sims=cfg.mcts_sims_eval)
+        random_time_s = time.perf_counter() - t0
+        total_eval_games += cfg.games
+        t0 = time.perf_counter()
+        wr_negamax, draw_rate, mean_len = _play_vs_kaggle_agent(
+            net,
+            "negamax",
+            games=cfg.games,
+            sims=cfg.mcts_sims_eval,
+        )
+        negamax_time_s = time.perf_counter() - t0
+        total_eval_games += cfg.games
+    metrics["winrate_vs_random"] = wr_random
     metrics["winrate_vs_negamax"] = wr_negamax
     metrics["diag_draw_rate"] = draw_rate
     metrics["diag_mean_game_length"] = mean_len
@@ -323,6 +336,10 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         )
         total_eval_games += cfg.games
     minimax_sweep_time_s = time.perf_counter() - t0
+    print(
+        "[eval] game suites done "
+        f"random={random_time_s:.2f}s negamax={negamax_time_s:.2f}s minimax={minimax_sweep_time_s:.2f}s",
+    )
     t0 = time.perf_counter()
     heldout, oracle_labels, label_time_s, label_cache_hit = _get_heldout_with_oracle_labels(
         heldout_size=cfg.heldout_size,
@@ -332,6 +349,10 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         heldout_dataset_path=cfg.heldout_dataset_path,
     )
     heldout_prep_time_s = time.perf_counter() - t0
+    print(
+        "[eval] heldout labels "
+        f"cache_hit={int(label_cache_hit)} prep={heldout_prep_time_s:.2f}s label={label_time_s:.2f}s",
+    )
     acc, mse, nan_inf, heldout_forward_time_s = _heldout_metrics_with_labels(
         net,
         heldout,
@@ -372,6 +393,7 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
     metrics["diag_eval_sims_per_s"] = (
         approx_eval_sims / total_time_s if total_time_s > 0.0 else 0.0
     )
+    metrics["diag_kaggle_matches_enabled"] = 1.0 if cfg.kaggle_matches else 0.0
     metrics["diag_heldout_oracle_cache_hit"] = 1.0 if label_cache_hit else 0.0
     return metrics
 
