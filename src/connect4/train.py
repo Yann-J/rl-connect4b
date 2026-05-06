@@ -315,6 +315,26 @@ def run_training(config: dict) -> str:
             writer.add_scalar("selfplay/refresh/batch_games_per_s", num_games / total_dt, tb_step)
             writer.add_scalar("selfplay/refresh/batch_wall_s", total_dt, tb_step)
 
+    eval_cfg = dict(config.get("eval", {}))
+    heldout_dataset_path = eval_cfg.get("heldout_dataset_path", "data/heldout_positions_v1.json")
+    if not Path(heldout_dataset_path).is_absolute():
+        heldout_dataset_path = (root_dir / heldout_dataset_path).resolve()
+    eval_cfg["heldout_dataset_path"] = str(heldout_dataset_path)
+    eval_enabled = bool(eval_cfg.get("enabled", False))
+    eval_interval_raw = eval_cfg.get("eval_interval_steps")
+    eval_once_at_start = bool(eval_cfg.get("eval_once_at_start", True))
+    full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
+    eval_interval = int(eval_interval_raw) if eval_interval_raw is not None else total_steps
+    eval_interval = max(1, eval_interval)
+    if total_steps > 0 and eval_interval > total_steps:
+        capped = max(1, total_steps // 10)
+        print(
+            "[train] eval_interval_steps="
+            f"{eval_interval} exceeds total_steps={total_steps}; "
+            f"capping to {capped} so periodic eval runs (plus final step).",
+        )
+        eval_interval = capped
+
     def produce_games() -> None:
         run_selfplay_batch(
             int(config["selfplay"]["games"]),
@@ -350,6 +370,39 @@ def run_training(config: dict) -> str:
                     writer.add_scalar("train/fps_async", fps_async, train_step_idx)
                     log_progress_scalars()
                 train_step_idx += 1
+                if eval_enabled and train_step_idx % eval_interval == 0:
+                    print(
+                        f"[eval] running eval train_step_idx={train_step_idx} "
+                        f"completed_steps=0/{total_steps}",
+                    )
+                    run_idx = train_step_idx // eval_interval
+                    full_panel = (run_idx % full_panel_every) == 0
+                    eval_profile = "full" if full_panel else "quick"
+                    eval_panel_cfg = _build_eval_cfg(eval_cfg, seed=seed, profile=eval_profile)
+                    eval_t0 = time.perf_counter()
+                    panel = run_eval_panel(
+                        model,
+                        eval_panel_cfg,
+                        league=league,
+                    )
+                    eval_wall = time.perf_counter() - eval_t0
+                    for key, value in panel.items():
+                        writer.add_scalar(f"eval/{key}", value, train_step_idx)
+                    writer.flush()
+                    print(
+                        "[eval] logged panel "
+                        f"profile={eval_profile} train_step_idx={train_step_idx} "
+                        "completed_steps=0 "
+                        f"wall={eval_wall:.2f}s "
+                        f"games/s={panel.get('diag_eval_games_per_s', 0.0):.2f} "
+                        f"sims/s={panel.get('diag_eval_sims_per_s', 0.0):.2f} "
+                        f"heldout={panel.get('diag_timing_heldout_oracle_label_s', 0.0):.2f}s",
+                    )
+                    if wandb_run is not None:
+                        wandb_run.log(
+                            {f"eval/{k}": v for k, v in panel.items()},
+                            step=train_step_idx,
+                        )
             else:
                 _ = fut.running()
     print(f"[train] selfplay collection done: buffer_size={len(buffer)}")
@@ -357,34 +410,10 @@ def run_training(config: dict) -> str:
     if len(buffer) == 0:
         raise RuntimeError("self-play produced no samples")
 
-    eval_cfg = dict(config.get("eval", {}))
-    heldout_dataset_path = eval_cfg.get("heldout_dataset_path", "data/heldout_positions_v1.json")
-    if not Path(heldout_dataset_path).is_absolute():
-        heldout_dataset_path = (root_dir / heldout_dataset_path).resolve()
-    eval_cfg["heldout_dataset_path"] = str(heldout_dataset_path)
-    eval_enabled = bool(eval_cfg.get("enabled", False))
-    eval_interval_raw = eval_cfg.get("eval_interval_steps")
-    eval_once_at_start = bool(eval_cfg.get("eval_once_at_start", True))
-    full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
     epochs = int(config["train"].get("epochs", 1))
     train_cfg = config["train"]
     steps_per_epoch = max(1, total_steps // max(1, epochs))
     remainder_steps = total_steps % max(1, epochs)
-    eval_interval = int(eval_interval_raw) if eval_interval_raw is not None else total_steps
-    eval_interval = max(1, eval_interval)
-    # If the interval is larger than the planned train loop, `completed_steps % interval`
-    # never hits zero and you only see the initial eval for the whole run.
-    if total_steps > 0 and eval_interval > total_steps:
-        capped = max(1, total_steps // 10)
-        print(
-            "[train] eval_interval_steps="
-            f"{eval_interval} exceeds total_steps={total_steps}; "
-            f"capping to {capped} so periodic eval runs (plus final step).",
-        )
-        eval_interval = capped
-    # Periodic eval is keyed off train_step_idx (every optimizer step, including async
-    # warmup during initial self-play), not completed_steps — so TB/wandb step axis
-    # matches eval_interval_steps in wall-clock optimizer steps.
     if selfplay_every_steps is not None and total_steps > 0 and selfplay_every_steps > total_steps:
         capped_sp = max(1, total_steps // 10)
         print(
