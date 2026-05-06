@@ -172,7 +172,7 @@ function updateLegend() {
     aiMode === STRONG_MODE
       ? `MCTS strong (${mctsSimulations} sims)`
       : "policy fast";
-  legendEl.textContent = `🟡 = you  🔴 = ${modeLabel} (\`web/${modelName}\`)`;
+  legendEl.textContent = `🟡 = you  🔴 = ${modeLabel} (${modelName})`;
 }
 
 function normalizeAiMode(mode) {
@@ -239,7 +239,7 @@ function gameStateText() {
     return "Loading ONNX model...";
   }
   return currentPlayer === humanPiece
-    ? "Your turn... 🤔"
+    ? "Your turn... ⏳"
     : `AI is thinking (${aiMode})... 🤔`;
 }
 

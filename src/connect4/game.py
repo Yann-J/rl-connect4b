@@ -13,8 +13,13 @@ class Position:
     to_play: int  # 1 or -1
 
 
-def new_game() -> Position:
-    return Position(board=np.zeros((ROWS, COLS), dtype=np.int8), to_play=1)
+def new_game(start_player: int = 1) -> Position:
+    if start_player not in (-1, 1):
+        raise ValueError(f"start_player must be -1 or 1, got {start_player}")
+    return Position(
+        board=np.zeros((ROWS, COLS), dtype=np.int8),
+        to_play=start_player,
+    )
 
 
 def legal_moves(pos: Position) -> list[int]:
@@ -40,9 +45,17 @@ def winner(board: np.ndarray) -> int:
                 return int(p)
             if r <= ROWS - 4 and all(board[r + i, c] == p for i in range(4)):
                 return int(p)
-            if r <= ROWS - 4 and c <= COLS - 4 and all(board[r + i, c + i] == p for i in range(4)):
+            if (
+                r <= ROWS - 4
+                and c <= COLS - 4
+                and all(board[r + i, c + i] == p for i in range(4))
+            ):
                 return int(p)
-            if r <= ROWS - 4 and c >= 3 and all(board[r + i, c - i] == p for i in range(4)):
+            if (
+                r <= ROWS - 4
+                and c >= 3
+                and all(board[r + i, c - i] == p for i in range(4))
+            ):
                 return int(p)
     return 0
 
@@ -68,4 +81,3 @@ def mirror_board(board: np.ndarray) -> np.ndarray:
 
 def mirror_policy(policy: np.ndarray) -> np.ndarray:
     return policy[::-1].copy()
-

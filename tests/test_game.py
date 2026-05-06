@@ -2,13 +2,27 @@ from __future__ import annotations
 
 import numpy as np
 
-from connect4.game import Position, apply_move, canonicalize, is_terminal, mirror_board, mirror_policy, new_game, winner
+from connect4.game import (
+    Position,
+    apply_move,
+    canonicalize,
+    is_terminal,
+    mirror_board,
+    mirror_policy,
+    new_game,
+    winner,
+)
 
 
 def test_legal_and_apply_move() -> None:
     pos = new_game()
     pos = apply_move(pos, 0)
     assert pos.board[5, 0] == 1
+
+
+def test_new_game_custom_start_player() -> None:
+    pos = new_game(start_player=-1)
+    assert pos.to_play == -1
 
 
 def test_winner_all_directions() -> None:
@@ -59,4 +73,3 @@ def test_terminal_draw() -> None:
     )
     t, w = is_terminal(Position(b, 1))
     assert t and w == 0
-

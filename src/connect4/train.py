@@ -18,6 +18,19 @@ from .replay_buffer import ReplayBuffer
 from .selfplay import play_one_game
 
 
+def planned_training_steps(config: dict) -> int:
+    train_cfg = config["train"]
+    if "steps" in train_cfg:
+        return max(1, int(train_cfg["steps"]))
+    steps_per_1k_positions = int(train_cfg.get("steps_per_1k_positions", 100))
+    positions_block = int(train_cfg.get("positions_block", 1000))
+    approx_new_positions = int(config["selfplay"]["games"]) * 42 * 2
+    return max(
+        1,
+        (approx_new_positions * steps_per_1k_positions) // max(1, positions_block),
+    )
+
+
 def _build_eval_cfg(eval_cfg: dict, seed: int, profile: str) -> EvalConfig:
     profile_cfg = eval_cfg.get(profile, {}) if isinstance(eval_cfg.get(profile, {}), dict) else {}
 
@@ -110,6 +123,22 @@ def run_training(config: dict) -> str:
     last_async_step_time = time.perf_counter()
     last_train_step_time = time.perf_counter()
     selfplay_sims = int(config["selfplay"].get("mcts_sims_selfplay", 100))
+    randomize_start_player = bool(
+        config["selfplay"].get("randomize_start_player", True),
+    )
+    train_cfg_early = config.get("train", {})
+    selfplay_every_raw = train_cfg_early.get("selfplay_every_steps")
+    selfplay_every_steps: int | None
+    if selfplay_every_raw is None:
+        selfplay_every_steps = None
+    else:
+        selfplay_every_steps = int(selfplay_every_raw)
+        if selfplay_every_steps <= 0:
+            selfplay_every_steps = None
+    games_per_refresh = max(
+        1,
+        int(config["selfplay"].get("games_per_refresh", config["selfplay"]["games"])),
+    )
 
     def ensure_finite_loss(
         loss: float,
@@ -148,7 +177,10 @@ def run_training(config: dict) -> str:
         )
 
     for _ in range(warmup_games):
-        pos = new_game()
+        start_player = 1
+        if randomize_start_player:
+            start_player = 1 if rng.random() < 0.5 else -1
+        pos = new_game(start_player=start_player)
         trajectory: list[tuple[np.ndarray, np.ndarray, int, np.ndarray]] = []
         while True:
             term, w = is_terminal(pos)
@@ -174,9 +206,9 @@ def run_training(config: dict) -> str:
     current_snapshot = snapshot_league(epoch_idx=0)
     writer.add_scalar("league/size", len(league), 0)
 
-    def produce_games() -> None:
+    def run_selfplay_batch(num_games: int, *, tb_step: int, phase: str) -> None:
         selfplay_stage_start = time.perf_counter()
-        for game_idx in range(int(config["selfplay"]["games"])):
+        for game_idx in range(num_games):
             game_t0 = time.perf_counter()
             opponent_ckpt = league.sample_opponent(current_snapshot)
             if opponent_ckpt == current_snapshot:
@@ -190,6 +222,7 @@ def run_training(config: dict) -> str:
                 model,
                 opponent_net=opponent_net,
                 current_player=current_player,
+                randomize_start_player=randomize_start_player,
                 sims=int(config["selfplay"].get("mcts_sims_selfplay", 100)),
                 rng=rng,
             )
@@ -200,34 +233,60 @@ def run_training(config: dict) -> str:
             should_log_selfplay = (
                 selfplay_log_every <= 1
                 or (game_idx + 1) % selfplay_log_every == 0
-                or (game_idx + 1) == int(config["selfplay"]["games"])
+                or (game_idx + 1) == num_games
             )
             if should_log_selfplay:
-                writer.add_scalar("selfplay/game_length", len(samples), game_idx)
-                writer.add_scalar(
-                    "selfplay/games_per_s",
-                    (1.0 / game_dt) if game_dt > 0.0 else 0.0,
-                    game_idx,
-                )
-                writer.add_scalar(
-                    "selfplay/sims_per_s",
-                    (game_sims / game_dt) if game_dt > 0.0 else 0.0,
-                    game_idx,
-                )
-                writer.add_scalar(
-                    "selfplay/draw",
-                    float(all(np.isclose(s[2], 0.0) for s in samples)),
-                    game_idx,
-                )
-                writer.add_scalar("buffer/size", len(buffer), game_idx)
+                if phase == "initial":
+                    writer.add_scalar("selfplay/game_length", len(samples), game_idx)
+                    writer.add_scalar(
+                        "selfplay/games_per_s",
+                        (1.0 / game_dt) if game_dt > 0.0 else 0.0,
+                        game_idx,
+                    )
+                    writer.add_scalar(
+                        "selfplay/sims_per_s",
+                        (game_sims / game_dt) if game_dt > 0.0 else 0.0,
+                        game_idx,
+                    )
+                    writer.add_scalar(
+                        "selfplay/draw",
+                        float(all(np.isclose(s[2], 0.0) for s in samples)),
+                        game_idx,
+                    )
+                    writer.add_scalar("buffer/size", len(buffer), game_idx)
+                else:
+                    log_step = tb_step + game_idx
+                    writer.add_scalar(f"selfplay/{phase}/game_length", len(samples), log_step)
+                    writer.add_scalar(
+                        f"selfplay/{phase}/games_per_s",
+                        (1.0 / game_dt) if game_dt > 0.0 else 0.0,
+                        log_step,
+                    )
+                    writer.add_scalar(
+                        f"selfplay/{phase}/sims_per_s",
+                        (game_sims / game_dt) if game_dt > 0.0 else 0.0,
+                        log_step,
+                    )
+                    writer.add_scalar(
+                        f"selfplay/{phase}/draw",
+                        float(all(np.isclose(s[2], 0.0) for s in samples)),
+                        log_step,
+                    )
+                    writer.add_scalar(f"selfplay/{phase}/buffer_size", len(buffer), log_step)
         total_dt = time.perf_counter() - selfplay_stage_start
-        total_games = int(config["selfplay"]["games"])
-        total_sims = max(1, total_games) * selfplay_sims
+        total_sims = max(1, num_games) * selfplay_sims
         print(
-            "[selfplay] "
-            f"games={total_games} wall={total_dt:.2f}s "
-            f"games/s={(total_games / total_dt) if total_dt > 0.0 else 0.0:.2f} "
+            f"[selfplay-{phase}] "
+            f"games={num_games} wall={total_dt:.2f}s "
+            f"games/s={(num_games / total_dt) if total_dt > 0.0 else 0.0:.2f} "
             f"sims/s={(total_sims / total_dt) if total_dt > 0.0 else 0.0:.2f}",
+        )
+
+    def produce_games() -> None:
+        run_selfplay_batch(
+            int(config["selfplay"]["games"]),
+            tb_step=0,
+            phase="initial",
         )
 
     with ThreadPoolExecutor(max_workers=2) as ex:
@@ -275,19 +334,29 @@ def run_training(config: dict) -> str:
     full_panel_every = max(1, int(eval_cfg.get("full_panel_every", 1)))
     epochs = int(config["train"].get("epochs", 1))
     train_cfg = config["train"]
-    if "steps" in train_cfg:
-        total_steps = int(train_cfg["steps"])
-    else:
-        steps_per_1k_positions = int(train_cfg.get("steps_per_1k_positions", 100))
-        positions_block = int(train_cfg.get("positions_block", 1000))
-        approx_new_positions = int(config["selfplay"]["games"]) * 42 * 2
-        total_steps = max(
-            1,
-            (approx_new_positions * steps_per_1k_positions) // max(1, positions_block),
-        )
+    total_steps = planned_training_steps(config)
     steps_per_epoch = max(1, total_steps // max(1, epochs))
     remainder_steps = total_steps % max(1, epochs)
     eval_interval = int(eval_interval_raw) if eval_interval_raw is not None else total_steps
+    eval_interval = max(1, eval_interval)
+    # If the interval is larger than the planned train loop, `completed_steps % interval`
+    # never hits zero and you only see the initial eval for the whole run.
+    if total_steps > 0 and eval_interval > total_steps:
+        capped = max(1, total_steps // 10)
+        print(
+            "[train] eval_interval_steps="
+            f"{eval_interval} exceeds total_steps={total_steps}; "
+            f"capping to {capped} so periodic eval runs (plus final step).",
+        )
+        eval_interval = capped
+    if selfplay_every_steps is not None and total_steps > 0 and selfplay_every_steps > total_steps:
+        capped_sp = max(1, total_steps // 10)
+        print(
+            "[train] selfplay_every_steps="
+            f"{selfplay_every_steps} exceeds total_steps={total_steps}; "
+            f"capping to {capped_sp}.",
+        )
+        selfplay_every_steps = capped_sp
     base_lr = float(config["train"]["lr"])
     cosine_min_lr = float(config["train"].get("cosine_min_lr", 1e-5))
 
@@ -374,7 +443,10 @@ def run_training(config: dict) -> str:
                 )
                 writer.flush()
             train_step_idx += 1
-            if eval_enabled and completed_steps % eval_interval == 0:
+            if eval_enabled and (
+                completed_steps % eval_interval == 0
+                or completed_steps == total_steps
+            ):
                 print(f"[eval] running eval at step={completed_steps}")
                 run_idx = completed_steps // eval_interval
                 full_panel = (run_idx % full_panel_every) == 0
@@ -402,6 +474,20 @@ def run_training(config: dict) -> str:
                         {f"eval/{k}": v for k, v in panel.items()},
                         step=train_step_idx,
                     )
+            if selfplay_every_steps is not None and completed_steps > 0 and (
+                completed_steps % selfplay_every_steps == 0
+                or completed_steps == total_steps
+            ):
+                print(
+                    f"[selfplay-refresh] step={completed_steps} "
+                    f"games={games_per_refresh} every={selfplay_every_steps}",
+                )
+                run_selfplay_batch(
+                    games_per_refresh,
+                    tb_step=train_step_idx,
+                    phase="refresh",
+                )
+                writer.add_scalar("buffer/size_after_refresh", len(buffer), train_step_idx)
         current_snapshot = snapshot_league(epoch_idx=epoch_idx + 1)
         writer.add_scalar("league/size", len(league), train_step_idx)
 

@@ -18,13 +18,17 @@ def play_one_game(
     current_net: TinyNet,
     opponent_net: TinyNet | None = None,
     current_player: int = 1,
+    randomize_start_player: bool = True,
     max_moves: int = 42,
     sims: int = 100,
     rng: np.random.Generator | None = None,
 ) -> list[tuple[np.ndarray, np.ndarray, float, np.ndarray]]:
     if rng is None:
         rng = np.random.default_rng()
-    pos: Position = new_game()
+    start_player = 1
+    if randomize_start_player:
+        start_player = 1 if rng.random() < 0.5 else -1
+    pos: Position = new_game(start_player=start_player)
     if opponent_net is None:
         opponent_net = current_net
     traj: list[tuple[np.ndarray, np.ndarray, int, np.ndarray]] = []

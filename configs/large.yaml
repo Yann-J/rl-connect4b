@@ -6,6 +6,7 @@ buffer:
   capacity: 100000
 selfplay:
   games: 256
+  games_per_refresh: 64
   warmup_random_games: 2000
   mcts_sims_selfplay: 300
 league:
@@ -31,7 +32,8 @@ eval:
     minimax_depths: [2, 4]
 train:
   epochs: 1
-  steps_per_1k_positions: 120
+  steps: 2000000
+  selfplay_every_steps: 250
   positions_block: 1000
   batch_size: 256
   lr: 0.0007
