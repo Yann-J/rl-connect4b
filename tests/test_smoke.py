@@ -123,3 +123,36 @@ def test_training_runs_periodic_selfplay(tmp_path: Path) -> None:
     }
     ckpt = run_training(cfg)
     assert Path(ckpt).exists()
+
+
+def test_training_with_parallel_selfplay(tmp_path: Path) -> None:
+    # Exercises the batched self-play path end to end.
+    out_dir = tmp_path / "out"
+    cfg = {
+        "seed": 0,
+        "model": {"hidden": 16},
+        "buffer": {"capacity": 512},
+        "selfplay": {
+            "games": 4,
+            "games_per_refresh": 2,
+            "warmup_random_games": 2,
+            "mcts_sims_selfplay": 2,
+            "parallel_games": 4,
+        },
+        "train": {
+            "steps": 6,
+            "batch_size": 4,
+            "lr": 0.01,
+            "selfplay_every_steps": 2,
+        },
+        "output": {"dir": str(out_dir)},
+        "logging": {
+            "tensorboard_dir": str(out_dir / "runs"),
+            "run_name": "parallel-sp",
+            "progress_every_steps": 0,
+            "train_log_every_steps": 100,
+            "selfplay_log_every_games": 100,
+        },
+    }
+    ckpt = run_training(cfg)
+    assert Path(ckpt).exists()

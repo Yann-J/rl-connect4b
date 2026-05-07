@@ -16,6 +16,7 @@ from .league import LeaguePool
 from .nn import TinyNet
 from .replay_buffer import ReplayBuffer
 from .selfplay import play_one_game
+from .selfplay_batched import play_games_batched
 
 
 def planned_training_steps(config: dict) -> int:
@@ -146,6 +147,10 @@ def run_training(config: dict) -> str:
     mcts_c_puct = float(mcts_cfg.get("c_puct", 1.5))
     mcts_dirichlet_alpha = float(mcts_cfg.get("dirichlet_alpha", 1.0))
     mcts_dirichlet_eps = float(mcts_cfg.get("dirichlet_eps", 0.25))
+    selfplay_parallel_games = max(
+        1,
+        int(config["selfplay"].get("parallel_games", 1)),
+    )
     train_cfg_early = config.get("train", {})
     selfplay_every_raw = train_cfg_early.get("selfplay_every_steps")
     selfplay_every_steps: int | None
@@ -255,84 +260,92 @@ def run_training(config: dict) -> str:
     current_snapshot = snapshot_league(epoch_idx=0)
     writer.add_scalar("league/size", len(league), 0)
 
-    def run_selfplay_batch(num_games: int, *, tb_step: int, phase: str) -> None:
+    def _opponent_net_for(opponent_ckpt: str) -> "TinyNet":
+        if opponent_ckpt == current_snapshot:
+            return model
+        if opponent_ckpt not in net_cache:
+            net_cache[opponent_ckpt] = TinyNet.load(opponent_ckpt)
+        return net_cache[opponent_ckpt]
+
+    def _ingest_samples(samples: list, game_idx: int, *, tb_step: int, phase: str, game_dt: float) -> None:
         nonlocal selfplay_mcts_games_total, replay_rows_mcts_total
+        for sample in samples:
+            buffer.add(*sample)
+        selfplay_mcts_games_total += 1
+        replay_rows_mcts_total += 2 * int(len(samples))
+        game_sims = max(1, len(samples)) * selfplay_sims
+        should_log_selfplay = (
+            selfplay_log_every <= 1
+            or (game_idx + 1) % selfplay_log_every == 0
+        )
+        if not should_log_selfplay:
+            return
+        prefix = "selfplay" if phase == "initial" else f"selfplay/{phase}"
+        log_step = game_idx if phase == "initial" else tb_step + game_idx
+        writer.add_scalar(f"{prefix}/game_length", len(samples), log_step)
+        if game_dt > 0.0:
+            writer.add_scalar(f"{prefix}/games_per_s", 1.0 / game_dt, log_step)
+            writer.add_scalar(f"{prefix}/sims_per_s", game_sims / game_dt, log_step)
+        writer.add_scalar(
+            f"{prefix}/draw",
+            float(all(np.isclose(s[2], 0.0) for s in samples)),
+            log_step,
+        )
+        size_key = "buffer/size" if phase == "initial" else f"{prefix}/buffer_size"
+        writer.add_scalar(size_key, len(buffer), log_step)
+
+    def run_selfplay_batch(num_games: int, *, tb_step: int, phase: str) -> None:
         selfplay_stage_start = time.perf_counter()
-        for game_idx in range(num_games):
-            game_t0 = time.perf_counter()
-            opponent_ckpt = league.sample_opponent(current_snapshot)
-            if opponent_ckpt == current_snapshot:
-                opponent_net = model
-            else:
-                if opponent_ckpt not in net_cache:
-                    net_cache[opponent_ckpt] = TinyNet.load(opponent_ckpt)
-                opponent_net = net_cache[opponent_ckpt]
-            current_player = 1 if rng.random() < 0.5 else -1
-            samples = play_one_game(
-                model,
-                opponent_net=opponent_net,
-                current_player=current_player,
-                randomize_start_player=randomize_start_player,
+        if selfplay_parallel_games > 1:
+            specs = []
+            for _ in range(num_games):
+                opponent_ckpt = league.sample_opponent(current_snapshot)
+                opponent_net = _opponent_net_for(opponent_ckpt)
+                current_player = 1 if rng.random() < 0.5 else -1
+                specs.append((model, opponent_net, current_player))
+            trajs = play_games_batched(
+                specs,
+                parallel_games=min(selfplay_parallel_games, num_games),
                 sims=selfplay_sims,
+                randomize_start_player=randomize_start_player,
                 c_puct=mcts_c_puct,
                 dirichlet_alpha=mcts_dirichlet_alpha,
                 dirichlet_eps=mcts_dirichlet_eps,
                 rng=rng,
             )
-            for sample in samples:
-                buffer.add(*sample)
-            selfplay_mcts_games_total += 1
-            replay_rows_mcts_total += 2 * int(len(samples))
-            game_dt = time.perf_counter() - game_t0
-            game_sims = max(1, len(samples)) * selfplay_sims
-            should_log_selfplay = (
-                selfplay_log_every <= 1
-                or (game_idx + 1) % selfplay_log_every == 0
-                or (game_idx + 1) == num_games
-            )
-            if should_log_selfplay:
-                if phase == "initial":
-                    writer.add_scalar("selfplay/game_length", len(samples), game_idx)
-                    writer.add_scalar(
-                        "selfplay/games_per_s",
-                        (1.0 / game_dt) if game_dt > 0.0 else 0.0,
-                        game_idx,
-                    )
-                    writer.add_scalar(
-                        "selfplay/sims_per_s",
-                        (game_sims / game_dt) if game_dt > 0.0 else 0.0,
-                        game_idx,
-                    )
-                    writer.add_scalar(
-                        "selfplay/draw",
-                        float(all(np.isclose(s[2], 0.0) for s in samples)),
-                        game_idx,
-                    )
-                    writer.add_scalar("buffer/size", len(buffer), game_idx)
-                else:
-                    log_step = tb_step + game_idx
-                    writer.add_scalar(f"selfplay/{phase}/game_length", len(samples), log_step)
-                    writer.add_scalar(
-                        f"selfplay/{phase}/games_per_s",
-                        (1.0 / game_dt) if game_dt > 0.0 else 0.0,
-                        log_step,
-                    )
-                    writer.add_scalar(
-                        f"selfplay/{phase}/sims_per_s",
-                        (game_sims / game_dt) if game_dt > 0.0 else 0.0,
-                        log_step,
-                    )
-                    writer.add_scalar(
-                        f"selfplay/{phase}/draw",
-                        float(all(np.isclose(s[2], 0.0) for s in samples)),
-                        log_step,
-                    )
-                    writer.add_scalar(f"selfplay/{phase}/buffer_size", len(buffer), log_step)
-        total_dt = time.perf_counter() - selfplay_stage_start
+            total_dt = time.perf_counter() - selfplay_stage_start
+            avg_game_dt = total_dt / max(1, num_games)
+            for game_idx, samples in enumerate(trajs):
+                _ingest_samples(
+                    samples, game_idx, tb_step=tb_step, phase=phase, game_dt=avg_game_dt,
+                )
+        else:
+            for game_idx in range(num_games):
+                game_t0 = time.perf_counter()
+                opponent_ckpt = league.sample_opponent(current_snapshot)
+                opponent_net = _opponent_net_for(opponent_ckpt)
+                current_player = 1 if rng.random() < 0.5 else -1
+                samples = play_one_game(
+                    model,
+                    opponent_net=opponent_net,
+                    current_player=current_player,
+                    randomize_start_player=randomize_start_player,
+                    sims=selfplay_sims,
+                    c_puct=mcts_c_puct,
+                    dirichlet_alpha=mcts_dirichlet_alpha,
+                    dirichlet_eps=mcts_dirichlet_eps,
+                    rng=rng,
+                )
+                game_dt = time.perf_counter() - game_t0
+                _ingest_samples(
+                    samples, game_idx, tb_step=tb_step, phase=phase, game_dt=game_dt,
+                )
+            total_dt = time.perf_counter() - selfplay_stage_start
         total_sims = max(1, num_games) * selfplay_sims
         print(
             f"[selfplay-{phase}] "
-            f"games={num_games} wall={total_dt:.2f}s "
+            f"games={num_games} parallel={selfplay_parallel_games} "
+            f"wall={total_dt:.2f}s "
             f"games/s={(num_games / total_dt) if total_dt > 0.0 else 0.0:.2f} "
             f"sims/s={(total_sims / total_dt) if total_dt > 0.0 else 0.0:.2f}",
         )
