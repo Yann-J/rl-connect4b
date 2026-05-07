@@ -26,11 +26,11 @@ selfplay:
 
 # MCTS hyperparameters
 mcts:
-  # PUCT coefficient
+  # PUCT coefficient (exploration bonus)
   c_puct: 1.5
-  # Dirichlet noise alpha
+  # Dirichlet noise alpha (concentration)
   dirichlet_alpha: 1.0
-  # Dirichlet noise epsilon
+  # Dirichlet noise epsilon (noise level)
   dirichlet_eps: 0.25
 
 # League / opponent sampling settings (for training against past snapshots).
@@ -61,7 +61,7 @@ eval:
   # Depths to evaluate against a minimax baseline (list of search depths).
   minimax_depths: [4, 6]
   # Depth used for the "oracle" evaluator (strong reference player).
-  oracle_depth: 4
+  oracle_depth: 6
   # Backend implementation for the oracle/minimax (project-specific engine name).
   oracle_backend: pons
   # Run eval every N training steps.
@@ -76,9 +76,9 @@ eval:
     # Fast sanity-check eval: heldout positions (0 disables heldout eval here).
     heldout_size: 0
     # Fast sanity-check eval: minimax depths (lighter baselines).
-    minimax_depths: [2]
+    minimax_depths: [4]
     # Fast sanity-check eval: oracle depth (lighter oracle).
-    oracle_depth: 2
+    oracle_depth: 4
 
 # Training loop / optimization hyperparameters.
 train:
