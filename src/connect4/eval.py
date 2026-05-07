@@ -304,10 +304,7 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
     )
     random_time_s = 0.0
     negamax_time_s = 0.0
-    draw_rate = 0.0
-    mean_len = 0.0
-    wr_random = 0.0
-    wr_negamax = 0.0
+    mean_len_for_sims: float | None = None
     if cfg.kaggle_matches:
         t0 = time.perf_counter()
         wr_random, _, _ = _play_vs_kaggle_agent(net, "random", games=cfg.games, sims=cfg.mcts_sims_eval)
@@ -322,10 +319,11 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         )
         negamax_time_s = time.perf_counter() - t0
         total_eval_games += cfg.games
-    metrics["winrate_vs_random"] = wr_random
-    metrics["winrate_vs_negamax"] = wr_negamax
-    metrics["diag_draw_rate"] = draw_rate
-    metrics["diag_mean_game_length"] = mean_len
+        mean_len_for_sims = mean_len
+        metrics["winrate_vs_random"] = wr_random
+        metrics["winrate_vs_negamax"] = wr_negamax
+        metrics["diag_draw_rate"] = draw_rate
+        metrics["diag_mean_game_length"] = mean_len
     t0 = time.perf_counter()
     for depth in cfg.minimax_depths:
         metrics[f"winrate_vs_minimax_d{depth}"] = _play_vs_minimax(
@@ -353,14 +351,16 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         "[eval] heldout labels "
         f"cache_hit={int(label_cache_hit)} prep={heldout_prep_time_s:.2f}s label={label_time_s:.2f}s",
     )
-    acc, mse, nan_inf, heldout_forward_time_s = _heldout_metrics_with_labels(
-        net,
-        heldout,
-        oracle_labels,
-    )
-    metrics["near_optimal_move_accuracy"] = acc
-    metrics["value_mse_vs_oracle"] = mse
-    metrics["diag_nan_inf_count"] = float(nan_inf)
+    heldout_forward_time_s = 0.0
+    if heldout:
+        acc, mse, nan_inf, heldout_forward_time_s = _heldout_metrics_with_labels(
+            net,
+            heldout,
+            oracle_labels,
+        )
+        metrics["near_optimal_move_accuracy"] = acc
+        metrics["value_mse_vs_oracle"] = mse
+        metrics["diag_nan_inf_count"] = float(nan_inf)
     start = new_game()
     _, pi0, _ = select_move(net, start, sims=cfg.mcts_sims_eval, selfplay=False)
     metrics["diag_root_policy_entropy"] = _policy_entropy(pi0)
@@ -378,21 +378,26 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
         metrics["league_elo_current"] = current_elo
         metrics["league_elo_mean_pool"] = league_mean_elo
     total_time_s = time.perf_counter() - eval_start
-    approx_eval_sims = total_eval_games * mean_len * cfg.mcts_sims_eval
-    metrics["diag_timing_random_games_s"] = random_time_s
-    metrics["diag_timing_negamax_games_s"] = negamax_time_s
+    approx_eval_sims = 0.0
+    if mean_len_for_sims is not None:
+        approx_eval_sims = total_eval_games * mean_len_for_sims * cfg.mcts_sims_eval
+    if cfg.kaggle_matches:
+        metrics["diag_timing_random_games_s"] = random_time_s
+        metrics["diag_timing_negamax_games_s"] = negamax_time_s
     metrics["diag_timing_minimax_sweep_s"] = minimax_sweep_time_s
     metrics["diag_timing_heldout_prep_s"] = heldout_prep_time_s
     metrics["diag_timing_heldout_oracle_label_s"] = label_time_s
-    metrics["diag_timing_heldout_forward_s"] = heldout_forward_time_s
+    if heldout:
+        metrics["diag_timing_heldout_forward_s"] = heldout_forward_time_s
     metrics["diag_timing_league_elo_s"] = league_time_s
     metrics["diag_timing_eval_total_s"] = total_time_s
     metrics["diag_eval_games_per_s"] = (
         total_eval_games / total_time_s if total_time_s > 0.0 else 0.0
     )
-    metrics["diag_eval_sims_per_s"] = (
-        approx_eval_sims / total_time_s if total_time_s > 0.0 else 0.0
-    )
+    if mean_len_for_sims is not None:
+        metrics["diag_eval_sims_per_s"] = (
+            approx_eval_sims / total_time_s if total_time_s > 0.0 else 0.0
+        )
     metrics["diag_kaggle_matches_enabled"] = 1.0 if cfg.kaggle_matches else 0.0
     metrics["diag_heldout_oracle_cache_hit"] = 1.0 if label_cache_hit else 0.0
     return metrics
@@ -416,5 +421,4 @@ def _play_vs_random(net: TinyNet, games: int, sims: int) -> float:
                 move = int(rng.choice(legal_moves(pos)))
             pos = apply_move(pos, move)
     return wins / max(1, games)
-
 
