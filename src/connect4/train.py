@@ -96,6 +96,13 @@ def run_training(config: dict) -> str:
         league.save(str(league_state_path))
         return str(ckpt_path)
 
+    def snapshot_league_step(step_idx: int) -> str:
+        ckpt_path = league_dir / f"step_{step_idx:08d}.ckpt"
+        model.save(str(ckpt_path))
+        league.snapshot(str(ckpt_path))
+        league.save(str(league_state_path))
+        return str(ckpt_path)
+
     run_name = config.get("logging", {}).get("run_name") or datetime.now().strftime(
         "%Y%m%d-%H%M%S",
     )
@@ -142,6 +149,14 @@ def run_training(config: dict) -> str:
         selfplay_every_steps = int(selfplay_every_raw)
         if selfplay_every_steps <= 0:
             selfplay_every_steps = None
+    checkpoint_every_raw = train_cfg_early.get("checkpoint_every_steps")
+    checkpoint_every_steps: int | None
+    if checkpoint_every_raw is None:
+        checkpoint_every_steps = None
+    else:
+        checkpoint_every_steps = int(checkpoint_every_raw)
+        if checkpoint_every_steps <= 0:
+            checkpoint_every_steps = None
     games_per_refresh = max(
         1,
         int(config["selfplay"].get("games_per_refresh", config["selfplay"]["games"])),
@@ -423,6 +438,18 @@ def run_training(config: dict) -> str:
             f"capping to {capped_sp}.",
         )
         selfplay_every_steps = capped_sp
+    if (
+        checkpoint_every_steps is not None
+        and total_steps > 0
+        and checkpoint_every_steps > total_steps
+    ):
+        capped_ckpt = max(1, total_steps // 10)
+        print(
+            "[train] checkpoint_every_steps="
+            f"{checkpoint_every_steps} exceeds total_steps={total_steps}; "
+            f"capping to {capped_ckpt}.",
+        )
+        checkpoint_every_steps = capped_ckpt
     base_lr = float(config["train"]["lr"])
     cosine_min_lr = float(config["train"].get("cosine_min_lr", 1e-5))
 
@@ -503,6 +530,16 @@ def run_training(config: dict) -> str:
                         "train/completed_steps": float(completed_steps),
                     },
                     step=train_step_idx,
+                )
+            if checkpoint_every_steps is not None and (
+                completed_steps % checkpoint_every_steps == 0
+                or completed_steps == total_steps
+            ):
+                current_snapshot = snapshot_league_step(step_idx=completed_steps)
+                writer.add_scalar("league/size", len(league), train_step_idx)
+                print(
+                    f"[checkpoint] saved step checkpoint at step={completed_steps} "
+                    f"every={checkpoint_every_steps}",
                 )
             if progress_every > 0 and completed_steps % progress_every == 0:
                 print(

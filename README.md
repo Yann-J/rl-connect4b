@@ -57,6 +57,9 @@ python scripts/train.py configs/large.yaml
 Each run writes checkpoints and artifacts under the configured `output.dir` (for example `checkpoints/medium`), including:
 
 - model checkpoint
+- league checkpoints in `output.dir/league`:
+  - `epoch_XXXX.ckpt` (always, once per epoch + initial `epoch_0000`)
+  - `step_XXXXXXXX.ckpt` (optional, when `train.checkpoint_every_steps` is set)
 - `model.onnx` (if ONNX export is enabled)
 - TensorBoard run info (`latest_tb_run.txt` when available)
 
@@ -120,6 +123,11 @@ The main top-level config sections are:
 - `logging`
 
 Start from `configs/small.yaml` for quick iterations, then scale to `medium`/`large`.
+
+Checkpoint cadence can be tuned with:
+
+- `train.epochs`: controls default epoch checkpoint frequency.
+- `train.checkpoint_every_steps`: optional step-based checkpoint interval (disabled when missing or <= 0).
 
 ## Web app
 

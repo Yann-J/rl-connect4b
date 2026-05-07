@@ -1,48 +1,105 @@
+# Global RNG seed (Python/NumPy/Torch) for reproducibility.
 seed: 0
+
+# Neural net architecture hyperparameters.
 model:
-  channels: 128
-  blocks: 10
+  # Base number of feature channels in the trunk (width of the network).
+  channels: 64
+  # Number of residual blocks in the trunk (depth of the network).
+  blocks: 5
+
+# Replay / training data buffer settings.
 buffer:
+  # Maximum number of self-play positions/transitions kept for training.
   capacity: 100000
+
+# Self-play data generation settings.
 selfplay:
+  # Total number of self-play games to generate per self-play phase.
   games: 256
+  # Chunk size: how many games to generate before refreshing opponents/league snapshot.
   games_per_refresh: 64
+  # Bootstrap: number of purely random games to seed the buffer before learning.
   warmup_random_games: 2000
+  # MCTS simulations per move during self-play (higher = stronger, slower).
   mcts_sims_selfplay: 200
+
+# League / opponent sampling settings (for training against past snapshots).
 league:
-  size: 16
+  # Number of historical checkpoints/snapshots kept in the league.
+  size: 5
+  # Probability of sampling "current vs current" self-play instead of vs-league.
   current_vs_current_prob: 0.5
+
+# Evaluation settings (periodic strength checks).
 eval:
+  # Master switch to run eval alongside training.
   enabled: true
+  # Whether to include Kaggle-format match evaluation (project-specific).
   kaggle_matches: false
+  # Number of eval games per opponent/matchup in the standard eval panel.
   games: 32
+  # MCTS simulations per move during eval (controls eval strength and runtime).
   mcts_sims_eval: 200
-  heldout_size: 2048
+  # Number of positions sampled from the heldout dataset for value/policy metrics.
+  heldout_size: 1000
+  # RNG seed used when sampling/shuffling heldout positions.
   heldout_seed: 0
+  # Path to the heldout positions dataset (JSON).
   heldout_dataset_path: data/heldout_positions_v1.json
-  league_games_per_pair: 2
+  # Round-robin: games played per league-pair when evaluating league standings.
+  league_games_per_pair: 3
+  # Depths to evaluate against a minimax baseline (list of search depths).
   minimax_depths: [4, 6]
+  # Depth used for the "oracle" evaluator (strong reference player).
   oracle_depth: 4
+  # Backend implementation for the oracle/minimax (project-specific engine name).
   oracle_backend: pons
-  eval_interval_steps: 3000
-  full_panel_every: 5
+  # Run eval every N training steps.
+  eval_interval_steps: 100
+  # Run the full (slower) eval panel every N eval intervals (others may be "quick").
+  full_panel_every: 4
   quick:
+    # Fast sanity-check eval: number of games.
     games: 10
+    # Fast sanity-check eval: MCTS sims per move.
     mcts_sims_eval: 50
+    # Fast sanity-check eval: heldout positions (0 disables heldout eval here).
     heldout_size: 0
+    # Fast sanity-check eval: minimax depths (lighter baselines).
     minimax_depths: [2]
+    # Fast sanity-check eval: oracle depth (lighter oracle).
     oracle_depth: 2
+
+# Training loop / optimization hyperparameters.
 train:
+  # Epochs over the (streaming) dataset per training iteration (often 1 for RL).
   epochs: 1
+  # Total number of gradient update steps to run.
   steps: 2000000
+  # Save checkpoints every N training steps.
+  checkpoint_every_steps: 200
+  # Trigger self-play generation every N training steps.
   selfplay_every_steps: 250
+  # Training data chunk size (number of positions processed/queued as a block).
   positions_block: 1000
+  # SGD minibatch size per optimization step.
   batch_size: 256
+  # Base learning rate (peak LR for the schedule).
   lr: 0.0007
+  # Minimum learning rate at the end of cosine schedule.
   cosine_min_lr: 0.000005
+
+# Output / checkpoint locations.
 output:
+  # Directory where checkpoints/artifacts are written.
   dir: checkpoints/large
+
+# Logging / metrics settings.
 logging:
+  # TensorBoard event files output directory.
   tensorboard_dir: checkpoints/large/runs
+  # Log training metrics every N training steps.
   train_log_every_steps: 2
+  # Log self-play metrics every N self-play games.
   selfplay_log_every_games: 10
