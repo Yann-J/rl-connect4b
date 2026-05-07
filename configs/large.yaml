@@ -24,6 +24,15 @@ selfplay:
   # MCTS simulations per move during self-play (higher = stronger, slower).
   mcts_sims_selfplay: 200
 
+# MCTS hyperparameters
+mcts:
+  # PUCT coefficient
+  c_puct: 1.5
+  # Dirichlet noise alpha
+  dirichlet_alpha: 1.0
+  # Dirichlet noise epsilon
+  dirichlet_eps: 0.25
+
 # League / opponent sampling settings (for training against past snapshots).
 league:
   # Number of historical checkpoints/snapshots kept in the league.
