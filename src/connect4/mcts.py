@@ -110,6 +110,25 @@ def _visit_policy(root: Node) -> np.ndarray:
     return visits / total
 
 
+def _positions_equal(a: Position, b: Position) -> bool:
+    return a.to_play == b.to_play and np.array_equal(a.board, b.board)
+
+
+def advance_root(root: Node | None, pos: Position) -> Node | None:
+    """Try to descend a previous root by one ply to reach `pos`.
+
+    Returns the matching subtree if found, else None (caller should build a fresh root).
+    """
+    if root is None:
+        return None
+    if _positions_equal(root.pos, pos):
+        return root
+    for child in root.children.values():
+        if _positions_equal(child.pos, pos):
+            return child
+    return None
+
+
 def select_move(
     net: TinyNet,
     pos: Position,
@@ -120,17 +139,28 @@ def select_move(
     dirichlet_eps: float = 0.25,
     c_puct: float = 1.5,
     rng: np.random.Generator | None = None,
-) -> tuple[int, np.ndarray]:
+    root: Node | None = None,
+) -> tuple[int, np.ndarray, Node | None]:
+    """Run MCTS and pick a move.
+
+    If ``root`` is provided and matches ``pos`` (or a child of it does), the existing
+    tree is reused. Returns ``(move, visit_pi, next_root)`` where ``next_root`` is the
+    subtree under the chosen move (or ``None`` if no move was played).
+    """
     if rng is None:
         rng = np.random.default_rng()
     legal = legal_moves(pos)
     if not legal:
-        return -1, np.zeros((7,), dtype=np.float32)
+        return -1, np.zeros((7,), dtype=np.float32), None
 
-    root = Node(pos=pos, prior=1.0)
-    _expand(net, root)
+    root = advance_root(root, pos)
+    if root is None:
+        root = Node(pos=pos, prior=1.0)
+    if not root.children:
+        _expand(net, root)
 
-    if selfplay and move_index == 0:
+    # Dirichlet noise is applied at every root in self-play (not just the first move).
+    if selfplay:
         _inject_root_dirichlet(
             root,
             alpha=dirichlet_alpha,
@@ -155,4 +185,5 @@ def select_move(
         probs = visit_pi.copy()
         probs = probs / np.clip(probs.sum(), 1e-8, None)
         move = int(rng.choice(np.arange(7), p=probs))
-    return move, visit_pi
+    next_root = root.children.get(move)
+    return move, visit_pi, next_root

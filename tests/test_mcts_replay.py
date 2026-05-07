@@ -12,7 +12,7 @@ def test_mcts_masks_illegal_moves() -> None:
     b = np.zeros((6, 7), dtype=np.int8)
     b[:, 0] = 1
     pos = Position(b, 1)
-    _m, pi = select_move(TinyNet(), pos, selfplay=False)
+    _m, pi, _ = select_move(TinyNet(), pos, selfplay=False)
     assert pi[0] == 0.0
     assert np.isclose(pi.sum(), 1.0)
 
@@ -20,20 +20,36 @@ def test_mcts_masks_illegal_moves() -> None:
 def test_dirichlet_applies_only_selfplay() -> None:
     net = TinyNet(seed=1)
     pos = new_game()
-    _m1, p1 = select_move(net, pos, selfplay=False)
-    _m2, p2 = select_move(net, pos, selfplay=False)
+    _m1, p1, _ = select_move(net, pos, selfplay=False)
+    _m2, p2, _ = select_move(net, pos, selfplay=False)
     assert np.allclose(p1, p2)
 
-    _m3, p3 = select_move(net, pos, selfplay=True)
-    _m4, p4 = select_move(net, pos, selfplay=True)
+    _m3, p3, _ = select_move(net, pos, selfplay=True)
+    _m4, p4, _ = select_move(net, pos, selfplay=True)
     assert not np.allclose(p3, p4)
 
 
-def test_tau_zero_is_deterministic() -> None:
+def test_dirichlet_applies_at_every_root_in_selfplay() -> None:
+    # Even past move_index 0, self-play should inject Dirichlet noise so the
+    # root prior varies across calls (was previously gated to move_index == 0).
+    net = TinyNet(seed=3)
+    pos = new_game()
+    _m1, p1, _ = select_move(net, pos, selfplay=True, move_index=5)
+    _m2, p2, _ = select_move(net, pos, selfplay=True, move_index=5)
+    assert not np.allclose(p1, p2)
+
+
+def test_tau_zero_is_deterministic_with_fixed_rng() -> None:
     net = TinyNet(seed=2)
     pos = new_game()
-    m1, _ = select_move(net, pos, selfplay=True, move_index=20)
-    m2, _ = select_move(net, pos, selfplay=True, move_index=20)
+    m1, _, _ = select_move(
+        net, pos, selfplay=True, move_index=20,
+        rng=np.random.default_rng(42),
+    )
+    m2, _, _ = select_move(
+        net, pos, selfplay=True, move_index=20,
+        rng=np.random.default_rng(42),
+    )
     assert m1 == m2
 
 

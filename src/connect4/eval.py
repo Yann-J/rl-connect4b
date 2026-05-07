@@ -49,7 +49,7 @@ def _play_vs_minimax(net: TinyNet, depth: int, games: int, sims: int) -> float:
                     wins += 1
                 break
             if pos.to_play == agent_player:
-                move, _ = select_move(net, pos, sims=sims, selfplay=False)
+                move, _, _ = select_move(net, pos, sims=sims, selfplay=False)
             else:
                 move = oracle.evaluate(pos).best_move
             pos = apply_move(pos, move)
@@ -126,7 +126,7 @@ def _play_vs_kaggle_agent(net: TinyNet, agent_name: str, games: int, sims: int) 
                     draws += 1
                 break
             if pos.to_play == agent_player:
-                move, _ = select_move(net, pos, sims=sims, selfplay=False)
+                move, _, _ = select_move(net, pos, sims=sims, selfplay=False)
             else:
                 legal = legal_moves(pos)
                 board = np.where(pos.board == 1, 1, np.where(pos.board == -1, 2, 0)).astype(np.int8)
@@ -252,7 +252,7 @@ def _play_head_to_head(net_a: TinyNet, net_b: TinyNet, games: int, sims: int) ->
                     wins_b += 1
                 break
             actor = net_a if pos.to_play == a_player else net_b
-            move, _ = select_move(actor, pos, sims=sims, selfplay=False)
+            move, _, _ = select_move(actor, pos, sims=sims, selfplay=False)
             pos = apply_move(pos, move)
     return wins_a, wins_b, draws
 
@@ -362,7 +362,7 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
     metrics["value_mse_vs_oracle"] = mse
     metrics["diag_nan_inf_count"] = float(nan_inf)
     start = new_game()
-    _, pi0 = select_move(net, start, sims=cfg.mcts_sims_eval, selfplay=False)
+    _, pi0, _ = select_move(net, start, sims=cfg.mcts_sims_eval, selfplay=False)
     metrics["diag_root_policy_entropy"] = _policy_entropy(pi0)
     league_time_s = 0.0
     if league is not None and len(league) > 0:
@@ -411,7 +411,7 @@ def _play_vs_random(net: TinyNet, games: int, sims: int) -> float:
                     wins += 1
                 break
             if pos.to_play == agent_player:
-                move, _ = select_move(net, pos, sims=sims, selfplay=False)
+                move, _, _ = select_move(net, pos, sims=sims, selfplay=False)
             else:
                 move = int(rng.choice(legal_moves(pos)))
             pos = apply_move(pos, move)

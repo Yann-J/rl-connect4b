@@ -83,12 +83,34 @@ class AZBackbone(nn.Module):
         return logits, v
 
 
+def _build_param_groups(
+    model: nn.Module,
+    weight_decay: float,
+) -> list[dict]:
+    """Group parameters so weight decay is applied to conv/linear weights only,
+    not to BatchNorm gain/bias or any biases."""
+    decay_params: list[torch.Tensor] = []
+    no_decay_params: list[torch.Tensor] = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.ndim <= 1 or name.endswith(".bias"):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+    return [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+
+
 @dataclass
 class TinyNet:
     channels: int = 64
     blocks: int = 5
     hidden: int | None = None
     seed: int = 0
+    weight_decay: float = 1e-4
 
     def __post_init__(self) -> None:
         torch.manual_seed(self.seed)
@@ -102,10 +124,9 @@ class TinyNet:
             channels=self.channels,
             blocks=self.blocks,
         ).to(self.device)
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(),
+        self.optimizer = torch.optim.AdamW(
+            _build_param_groups(self.model, weight_decay=float(self.weight_decay)),
             lr=1e-3,
-            weight_decay=1e-4,
         )
         self.last_grad_norm = 0.0
 

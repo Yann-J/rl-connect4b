@@ -28,7 +28,7 @@ def play_cli(checkpoint: str) -> None:
                 continue
             pos = apply_move(pos, move)
         else:
-            move, pi = select_move(net, pos)
+            move, pi, _ = select_move(net, pos)
             print(f"Agent move: {move} | visit-policy: {pi.round(3).tolist()}")
             pos = apply_move(pos, move)
 

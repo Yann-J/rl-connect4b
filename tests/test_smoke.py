@@ -23,7 +23,7 @@ def test_network_forward_shapes() -> None:
 def test_mcts_legal_move() -> None:
     net = TinyNet()
     pos = new_game()
-    move, _pi = select_move(net, pos)
+    move, _pi, _root = select_move(net, pos)
     assert move in legal_moves(pos)
 
 

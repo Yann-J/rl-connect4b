@@ -64,10 +64,12 @@ def run_training(config: dict) -> str:
     rng = np.random.default_rng(seed)
 
     model_cfg = config.get("model", {})
+    train_cfg_for_model = config.get("train", {})
     model = TinyNet(
         channels=int(model_cfg.get("channels", model_cfg.get("hidden", 64))),
         blocks=int(model_cfg.get("blocks", 5)),
         seed=seed,
+        weight_decay=float(train_cfg_for_model.get("weight_decay", 1e-4)),
     )
     buffer = ReplayBuffer(capacity=int(config["buffer"]["capacity"]))
     warmup_games = int(config["selfplay"].get("warmup_random_games", 1000))
@@ -140,6 +142,10 @@ def run_training(config: dict) -> str:
     randomize_start_player = bool(
         config["selfplay"].get("randomize_start_player", True),
     )
+    mcts_cfg = config.get("mcts", {})
+    mcts_c_puct = float(mcts_cfg.get("c_puct", 1.5))
+    mcts_dirichlet_alpha = float(mcts_cfg.get("dirichlet_alpha", 1.0))
+    mcts_dirichlet_eps = float(mcts_cfg.get("dirichlet_eps", 0.25))
     train_cfg_early = config.get("train", {})
     selfplay_every_raw = train_cfg_early.get("selfplay_every_steps")
     selfplay_every_steps: int | None
@@ -267,7 +273,10 @@ def run_training(config: dict) -> str:
                 opponent_net=opponent_net,
                 current_player=current_player,
                 randomize_start_player=randomize_start_player,
-                sims=int(config["selfplay"].get("mcts_sims_selfplay", 100)),
+                sims=selfplay_sims,
+                c_puct=mcts_c_puct,
+                dirichlet_alpha=mcts_dirichlet_alpha,
+                dirichlet_eps=mcts_dirichlet_eps,
                 rng=rng,
             )
             for sample in samples:
