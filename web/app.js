@@ -136,6 +136,27 @@ function buildObsForAi() {
   return obs;
 }
 
+function resolveInputName(sessionInputNames, preferredNames, fallbackIndex = 0) {
+  for (const name of preferredNames) {
+    if (sessionInputNames.includes(name)) return name;
+  }
+  return sessionInputNames[fallbackIndex] || preferredNames[0];
+}
+
+function buildInferenceFeeds(session, obsTensor, legalMaskTensor) {
+  const inputNames = session.inputNames || [];
+  const obsName = resolveInputName(inputNames, ["obs", "x"], 0);
+  const maskName = resolveInputName(
+    inputNames,
+    ["legal_mask", "action_mask", "mask"],
+    1,
+  );
+  return {
+    [obsName]: obsTensor,
+    [maskName]: legalMaskTensor,
+  };
+}
+
 async function chooseAiColumn() {
   const legal = legalColumns();
   if (legal.length === 0) return -1;
@@ -148,7 +169,7 @@ async function chooseAiColumn() {
   const maskData = new Uint8Array(COLS);
   for (const col of legal) maskData[col] = 1;
   const legalMask = new ort.Tensor("bool", maskData, [1, COLS]);
-  const outputs = await session.run({ x: obs, legal_mask: legalMask });
+  const outputs = await session.run(buildInferenceFeeds(session, obs, legalMask));
   const rawPolicy = outputs.policy?.data ?? outputs.logits?.data;
   const policy = normalizeMaskedPolicy(rawPolicy, legal);
 
