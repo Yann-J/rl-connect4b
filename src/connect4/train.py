@@ -42,10 +42,16 @@ def _build_eval_cfg(eval_cfg: dict, seed: int, profile: str) -> EvalConfig:
 
     minimax_depths_raw = profile_cfg.get("minimax_depths", eval_cfg.get("minimax_depths", [2, 4, 6, 8]))
     minimax_depths = tuple(int(d) for d in minimax_depths_raw)
+    profile_kaggle = profile_cfg.get("kaggle_matches")
+    if profile_kaggle is None:
+        kaggle_matches = bool(eval_cfg.get("kaggle_matches", True))
+    else:
+        kaggle_matches = bool(profile_kaggle)
+
     return EvalConfig(
         games=get("games", 200),
         mcts_sims_eval=get("mcts_sims_eval", 400),
-        kaggle_matches=bool(eval_cfg.get("kaggle_matches", True)),
+        kaggle_matches=kaggle_matches,
         heldout_size=get("heldout_size", 10000),
         heldout_seed=int(eval_cfg.get("heldout_seed", seed)),
         league_games_per_pair=get("league_games_per_pair", 2),
@@ -54,6 +60,15 @@ def _build_eval_cfg(eval_cfg: dict, seed: int, profile: str) -> EvalConfig:
         oracle_backend=str(eval_cfg.get("oracle_backend", "minimax")),
         heldout_dataset_path=str(
             eval_cfg.get("heldout_dataset_path", "data/heldout_positions_v1.json"),
+        ),
+        tactics_enabled=bool(
+            profile_cfg.get("tactics_enabled", eval_cfg.get("tactics_enabled", True)),
+        ),
+        tactics_search_sims=int(
+            profile_cfg.get(
+                "tactics_search_sims",
+                eval_cfg.get("tactics_search_sims", 200),
+            ),
         ),
     )
 

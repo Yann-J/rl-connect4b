@@ -133,4 +133,14 @@ Checkpoint cadence can be tuned with:
 
 The `web` folder contains a static app (`index.html`, `app.js`, `styles.css`) and a model file (`model.onnx`).
 
-After training, copy/export your latest ONNX model into `web/model.onnx` to test it in-browser.
+After training, copy the export into the browser app:
+
+```bash
+python scripts/copy_web_model.py
+```
+
+The web UI defaults to `web/model.onnx`. Loop eval during training logs vs minimax depth 2 and the Forced win/block fixture; Gate eval (200 vs Kaggle negamax) is:
+
+```bash
+uv run python scripts/run_gate_eval.py --checkpoint checkpoints/small/model.ckpt
+```

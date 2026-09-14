@@ -35,7 +35,7 @@ let endgameAnimationPlayed = false;
 let downloadedModelBytes = 0;
 let modelLoadError = null;
 const MODEL_STORAGE_KEY = "connect4-model-name";
-const DEFAULT_MODEL_NAME = "policy.onnx";
+const DEFAULT_MODEL_NAME = "model.onnx";
 const MODE_STORAGE_KEY = "connect4-ai-mode";
 const FAST_MODE = "fast";
 const STRONG_MODE = "strong";
@@ -54,6 +54,10 @@ function normalizeModelName(rawName) {
 
 function loadModelNameSetting() {
   const stored = window.localStorage.getItem(MODEL_STORAGE_KEY);
+  if (stored === "policy.onnx") {
+    window.localStorage.setItem(MODEL_STORAGE_KEY, DEFAULT_MODEL_NAME);
+    return DEFAULT_MODEL_NAME;
+  }
   return normalizeModelName(stored);
 }
 

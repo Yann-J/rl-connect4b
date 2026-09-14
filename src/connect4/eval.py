@@ -13,6 +13,7 @@ from .league import LeaguePool
 from .mcts import select_move
 from .nn import TinyNet
 from .oracle import OracleResult, build_oracle
+from .tactics import evaluate_tactics
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ class EvalConfig:
     oracle_depth: int = 10
     oracle_backend: str = "minimax"
     heldout_dataset_path: str = "data/heldout_positions_v1.json"
+    tactics_enabled: bool = True
+    tactics_search_sims: int = 200
 
 
 _HELDOUT_LABEL_CACHE: dict[
@@ -300,8 +303,13 @@ def run_eval_panel(net: TinyNet, cfg: EvalConfig, league: LeaguePool | None = No
     print(
         "[eval] panel start "
         f"games={cfg.games} sims={cfg.mcts_sims_eval} "
-        f"heldout={cfg.heldout_size} oracle_depth={cfg.oracle_depth}",
+        f"heldout={cfg.heldout_size} oracle_depth={cfg.oracle_depth} "
+        f"tactics={int(cfg.tactics_enabled)}",
     )
+    if cfg.tactics_enabled:
+        metrics.update(
+            evaluate_tactics(net, search_sims=cfg.tactics_search_sims),
+        )
     random_time_s = 0.0
     negamax_time_s = 0.0
     mean_len_for_sims: float | None = None

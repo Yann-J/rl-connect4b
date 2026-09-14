@@ -3,43 +3,56 @@ model:
   channels: 128
   blocks: 10
 buffer:
-  capacity: 50000
+  capacity: 100000
 selfplay:
   games: 128
   games_per_refresh: 32
   warmup_random_games: 1000
   mcts_sims_selfplay: 200
+  parallel_games: 8
 league:
   size: 10
   current_vs_current_prob: 0.5
+mcts:
+  c_puct: 1.5
+  dirichlet_alpha: 1.0
+  dirichlet_eps: 0.25
 eval:
   enabled: true
   kaggle_matches: false
-  games: 20
-  mcts_sims_eval: 100
-  heldout_size: 512
+  tactics_search_sims: 200
+  eval_interval_steps: 1000
+  full_panel_every: 50
   heldout_seed: 0
   heldout_dataset_path: data/heldout_positions_v1.json
-  league_games_per_pair: 2
-  minimax_depths: [2, 4, 6]
-  oracle_depth: 6
-  oracle_backend: pons
-  eval_interval_steps: 2000
-  full_panel_every: 5
+  oracle_backend: minimax
   quick:
-    games: 8
-    mcts_sims_eval: 64
-    heldout_size: 128
+    games: 20
+    mcts_sims_eval: 100
+    heldout_size: 0
+    minimax_depths: [2]
+    league_games_per_pair: 0
+    tactics_enabled: true
+  full:
+    games: 200
+    mcts_sims_eval: 200
+    kaggle_matches: true
+    heldout_size: 512
     minimax_depths: [2, 4]
+    league_games_per_pair: 1
+    tactics_enabled: true
 train:
-  epochs: 1
-  selfplay_every_steps: 120
-  steps_per_1k_positions: 100
-  positions_block: 1000
+  steps: 80000
+  selfplay_every_steps: 250
   batch_size: 256
   lr: 0.001
   cosine_min_lr: 0.00001
+  checkpoint_every_steps: 5000
 output:
   dir: checkpoints/medium
+  onnx_file: model.onnx
 logging:
   tensorboard_dir: checkpoints/medium/runs
+  train_log_every_steps: 50
+  selfplay_log_every_games: 16
+  progress_every_steps: 500

@@ -167,7 +167,7 @@ export function pickChildByPuct(node, cPuct = C_PUCT) {
   let bestScore = Number.NEGATIVE_INFINITY;
   let best = null;
   for (const [move, child] of node.children.entries()) {
-    const q = child.visitCount > 0 ? child.valueSum / child.visitCount : 0;
+    const q = child.visitCount > 0 ? -(child.valueSum / child.visitCount) : 0;
     const u = cPuct * child.prior * (parentSqrt / (1 + child.visitCount));
     const score = q + u;
     if (score > bestScore) {
@@ -199,18 +199,13 @@ function backprop(path, leafValue) {
   }
 }
 
-export async function runMcts(session, ort, board, aiPiece, sims = 80) {
-  const root = createNode(cloneBoard(board), aiPiece, 1);
-  const rootEval = await inferPolicyValue(
-    session,
-    ort,
-    root.board,
-    root.toPlay,
-  );
+export async function runSearch(evaluate, board, toPlay, sims = 80) {
+  const root = createNode(cloneBoard(board), toPlay, 1);
+  const rootEval = await evaluate(root.board, root.toPlay);
   expandNode(root, rootEval.policy, rootEval.legal);
-  root.visitCount = 1;
 
-  for (let sim = 0; sim < sims; sim += 1) {
+  const nSims = Math.max(1, sims);
+  for (let sim = 0; sim < nSims; sim += 1) {
     const path = [root];
     let node = root;
     while (node.expanded && node.children.size > 0) {
@@ -227,25 +222,37 @@ export async function runMcts(session, ort, board, aiPiece, sims = 80) {
     } else if (legalColumnsForBoard(node.board).length === 0) {
       leafValue = 0;
     } else {
-      const evalResult = await inferPolicyValue(
-        session,
-        ort,
-        node.board,
-        node.toPlay,
-      );
+      const evalResult = await evaluate(node.board, node.toPlay);
       expandNode(node, evalResult.policy, evalResult.legal);
       leafValue = evalResult.value;
     }
     backprop(path, leafValue);
   }
 
+  const visitPolicy = new Float32Array(COLS);
   let bestMove = -1;
   let bestVisits = -1;
+  let totalVisits = 0;
   for (const [move, child] of root.children.entries()) {
+    visitPolicy[move] = child.visitCount;
+    totalVisits += child.visitCount;
     if (child.visitCount > bestVisits) {
       bestVisits = child.visitCount;
       bestMove = move;
     }
   }
-  return bestMove;
+  if (totalVisits > 0) {
+    for (let col = 0; col < COLS; col += 1) visitPolicy[col] /= totalVisits;
+  }
+  return { move: bestMove, visitPolicy };
+}
+
+export async function runMcts(session, ort, board, aiPiece, sims = 80) {
+  const result = await runSearch(
+    (nextBoard, toPlay) => inferPolicyValue(session, ort, nextBoard, toPlay),
+    board,
+    aiPiece,
+    sims,
+  );
+  return result.move;
 }

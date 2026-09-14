@@ -61,7 +61,7 @@
       </div>
       <div id="status">Loading ONNX model...</div>
       <section id="board" class="board" aria-label="Connect-4 board"></section>
-      <div id="legend" class="legend">🟡 = you  🔴 = policy fast (`web/policy.onnx`)</div>
+      <div id="legend" class="legend">🟡 = you  🔴 = Agent (`web/model.onnx`)</div>
     </main>
 
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -73,7 +73,7 @@
           <option value="strong">Strong (MCTS)</option>
         </select>
         <label class="field-label" for="model-name-input">Model file name</label>
-        <input id="model-name-input" type="text" placeholder="policy.onnx" />
+        <input id="model-name-input" type="text" placeholder="model.onnx" />
         <label class="field-label" for="mcts-sims-input">MCTS simulations</label>
         <input id="mcts-sims-input" type="number" min="1" step="1" placeholder="80" />
         <div class="modal-actions">
