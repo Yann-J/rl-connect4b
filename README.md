@@ -1,6 +1,6 @@
 # rl-connect4b
 
-Connect-4 training pipeline with league self-play, minimax/oracle evaluation, ONNX export, and a static web demo.
+Connect-4 training pipeline with league self-play, minimax/oracle evaluation, ONNX export, and a pure web demo, auto-published via GitHub pages at [RL-Connect4](https://yann-j.github.io/rl-connect4b/).
 
 ## General architecture
 
